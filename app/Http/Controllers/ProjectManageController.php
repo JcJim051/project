@@ -5,13 +5,27 @@ namespace App\Http\Controllers;
 use App\Models\Project;
 use App\Models\Requirement;
 use App\Models\RequirementEvidence;
+use App\Models\AttachmentPackageRun;
 use App\Services\GoogleDriveService;
 use Illuminate\Http\Request;
+use Symfony\Component\Process\Process;
 
 class ProjectManageController extends Controller
 {
     public function show(Request $request, Project $project, GoogleDriveService $drive)
     {
+        return $this->renderManage($request, $project, $drive, 'projects.manage', 'projects.manage');
+    }
+
+    public function showLegacy(Request $request, Project $project, GoogleDriveService $drive)
+    {
+        return $this->renderManage($request, $project, $drive, 'projects.manage_legacy', 'projects.manage.legacy');
+    }
+
+    private function renderManage(Request $request, Project $project, GoogleDriveService $drive, string $viewName, string $routeName)
+    {
+        $this->expireStaleAttachmentRuns($project->id);
+
         $project->load(['requisitos', 'sectores']);
         $requirements = $project->requisitos()
             ->where('requirements.visible', true)
@@ -33,16 +47,15 @@ class ProjectManageController extends Controller
             @ini_set('max_execution_time', '0');
             set_time_limit(0);
             try {
-                RequirementEvidence::where('project_id', $project->id)->delete();
                 $syncReport = $drive->syncProjectRequirements($project, $requirements, auth()->id());
             } catch (\Throwable $e) {
                 return redirect()
-                    ->route('projects.manage', $project)
+                    ->route($routeName, $project)
                     ->withErrors(['archivo' => $e->getMessage() ?: 'Error al sincronizar con Drive.']);
             }
             if (!empty($syncReport['error'])) {
                 return redirect()
-                    ->route('projects.manage', $project)
+                    ->route($routeName, $project)
                     ->withErrors(['archivo' => $syncReport['error']]);
             }
             if (!$request->boolean('debug')) {
@@ -81,8 +94,14 @@ class ProjectManageController extends Controller
             ];
         }
         $topGroupProgress = $this->buildTopGroupProgress($folderProgress);
+        $attachmentRuns = AttachmentPackageRun::query()
+            ->where('project_id', $project->id)
+            ->latest()
+            ->limit(8)
+            ->get();
+        $attachmentPdfHealth = $this->buildAttachmentPdfHealth();
 
-        return view('projects.manage', [
+        return view($viewName, [
             'project' => $project,
             'requirements' => $requirements,
             'requirementsByFolder' => $requirementsByFolder,
@@ -95,6 +114,9 @@ class ProjectManageController extends Controller
             'folderProgress' => $folderProgress,
             'manageSections' => $manageSections,
             'topGroupProgress' => $topGroupProgress,
+            'attachmentRuns' => $attachmentRuns,
+            'attachmentPdfHealth' => $attachmentPdfHealth,
+            'canGenerateAttachmentPackage' => $overallPercent === 100,
         ]);
     }
 
@@ -138,14 +160,13 @@ class ProjectManageController extends Controller
             try {
                 $drive->uploadEvidence($project, $requirement, $archivo, $targetName, auth()->id());
             } catch (\Throwable $e) {
-                return redirect()
-                    ->route('projects.manage', $project)
+                return back()
                     ->withErrors(['archivo' => $e->getMessage() ?: 'Error al subir a Drive.']);
             }
             $index++;
         }
 
-        return redirect()->route('projects.manage', $project)->with('status', 'Evidencias cargadas en Drive.');
+        return back()->with('status', 'Evidencias cargadas en Drive.');
     }
 
     private function buildRenumerationMap($requirements): array
@@ -328,5 +349,59 @@ class ProjectManageController extends Controller
         }
 
         return null;
+    }
+
+    private function expireStaleAttachmentRuns(int $projectId): void
+    {
+        $threshold = now()->subMinutes(15);
+        AttachmentPackageRun::query()
+            ->where('project_id', $projectId)
+            ->whereIn('status', ['pending', 'running'])
+            ->where(function ($q) use ($threshold) {
+                $q->where('updated_at', '<', $threshold)
+                    ->orWhere(function ($inner) use ($threshold) {
+                        $inner->whereNull('updated_at')
+                            ->where('created_at', '<', $threshold);
+                    });
+            })
+            ->update([
+                'status' => 'failed',
+                'error_message' => 'Proceso marcado como vencido por inactividad (15 min).',
+                'finished_at' => now(),
+            ]);
+    }
+
+    private function buildAttachmentPdfHealth(): array
+    {
+        $pythonBin = (string) config('services.attachments_pdf.python_bin', 'python3');
+        $scriptPath = (string) config('services.attachments_pdf.script_path', base_path('scripts/generate_attachment_pdfs.py'));
+
+        $pythonOk = false;
+        $pythonVersion = null;
+        $pythonError = null;
+
+        try {
+            $process = new Process([$pythonBin, '--version']);
+            $process->setTimeout(10);
+            $process->run();
+
+            if ($process->isSuccessful()) {
+                $pythonOk = true;
+                $pythonVersion = trim($process->getOutput() ?: $process->getErrorOutput());
+            } else {
+                $pythonError = trim($process->getErrorOutput() ?: $process->getOutput());
+            }
+        } catch (\Throwable $e) {
+            $pythonError = $e->getMessage();
+        }
+
+        return [
+            'python_bin' => $pythonBin,
+            'script_path' => $scriptPath,
+            'script_exists' => is_file($scriptPath),
+            'python_ok' => $pythonOk,
+            'python_version' => $pythonVersion,
+            'python_error' => $pythonError,
+        ];
     }
 }

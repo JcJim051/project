@@ -3,11 +3,13 @@
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectManageController;
 use App\Http\Controllers\RequirementController;
+use App\Http\Controllers\RequirementCrudController;
 use App\Http\Controllers\ChecklistController;
 use App\Http\Controllers\DriveAuthController;
-use App\Http\Controllers\DocumentTemplateController;
+use App\Http\Controllers\DriveSettingsController;
 use App\Http\Controllers\ProjectDocumentController;
-use App\Http\Controllers\RequirementCrudController;
+use App\Http\Controllers\ProjectDriveEvidenceController;
+use App\Http\Controllers\AttachmentPackageRunController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -19,19 +21,30 @@ Route::middleware([
     config('jetstream.auth_session'),
     'verified',
 ])->group(function () {
-    Route::get('/dashboard', [ProjectController::class, 'index'])->name('dashboard');
+    Route::get('/dashboard', fn () => redirect()->route('filament.admin.resources.projects.index'))->name('dashboard');
 
-    Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
-    Route::get('/projects/create', [ProjectController::class, 'create'])->name('projects.create');
+    Route::get('/projects', fn () => redirect()->route('filament.admin.resources.projects.index'))->name('projects.index');
+    Route::get('/projects/create', fn () => redirect()->route('filament.admin.resources.projects.create'))->name('projects.create');
     Route::post('/projects', [ProjectController::class, 'store'])->name('projects.store');
-    Route::get('/projects/{project}/edit', [ProjectController::class, 'edit'])->name('projects.edit');
+    Route::get('/projects/{project}/edit', fn ($project) => redirect()->route('filament.admin.resources.projects.edit', ['record' => $project]))->name('projects.edit');
     Route::put('/projects/{project}', [ProjectController::class, 'update'])->name('projects.update');
+
+    Route::get('/legacy/projects', [ProjectController::class, 'index'])->name('projects.legacy.index');
 
     Route::get('/projects/{project}/checklist', [ChecklistController::class, 'show'])->name('projects.checklist');
     Route::put('/projects/{project}/checklist', [ChecklistController::class, 'update'])->name('projects.checklist.update');
 
     Route::get('/projects/{project}/manage', [ProjectManageController::class, 'show'])->name('projects.manage');
+    Route::get('/projects/{project}/manage-legacy', [ProjectManageController::class, 'showLegacy'])->name('projects.manage.legacy');
     Route::post('/projects/{project}/manage/{requirement}', [ProjectManageController::class, 'upload'])->name('projects.manage.upload');
+    Route::get('/projects/{project}/drive/files', [ProjectDriveEvidenceController::class, 'listFiles'])->name('projects.drive.files');
+    Route::post('/projects/{project}/requirements/{requirement}/link-drive-file', [ProjectDriveEvidenceController::class, 'linkFile'])->name('projects.requirements.link_drive_file');
+    Route::delete('/projects/{project}/requirements/{requirement}/drive-evidences/{evidence}', [ProjectDriveEvidenceController::class, 'unlinkFile'])->name('projects.requirements.unlink_drive_file');
+    Route::post('/projects/{project}/requirements/link-drive-files-bulk', [ProjectDriveEvidenceController::class, 'linkFilesBulk'])->name('projects.requirements.link_drive_files_bulk');
+    Route::get('/projects/{project}/attachments-pdf/runs', [AttachmentPackageRunController::class, 'index'])->name('projects.attachments.runs.index');
+    Route::post('/projects/{project}/attachments-pdf/runs', [AttachmentPackageRunController::class, 'store'])->name('projects.attachments.runs.store');
+    Route::get('/projects/{project}/attachments-pdf/runs/{run}', [AttachmentPackageRunController::class, 'show'])->name('projects.attachments.runs.show');
+    Route::get('/projects/{project}/attachments-pdf/runs/{run}/download', [AttachmentPackageRunController::class, 'download'])->name('projects.attachments.runs.download');
 
     Route::get('/projects/{project}/documents', [ProjectDocumentController::class, 'index'])->name('projects.documents');
     Route::get('/projects/{project}/documents/{documentTemplate}', [ProjectDocumentController::class, 'download'])->name('projects.documents.download');
@@ -39,20 +52,31 @@ Route::middleware([
 
     Route::get('/drive/auth', [DriveAuthController::class, 'redirect'])->name('drive.auth');
     Route::get('/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback');
+    Route::get('/drive/settings', fn () => redirect('/panel/drive-oauth-settings'))->name('drive.settings.edit');
+    Route::put('/drive/settings', [DriveSettingsController::class, 'update'])->name('drive.settings.update');
 
     Route::get('/requirements/import', [RequirementController::class, 'importForm'])->name('requirements.import');
     Route::post('/requirements/import', [RequirementController::class, 'import'])->name('requirements.import.store');
     Route::get('/requirements/export', [RequirementController::class, 'export'])->name('requirements.export');
-    Route::get('/requirements', [RequirementCrudController::class, 'index'])->name('requirements.crud.index');
-    Route::get('/requirements/create', [RequirementCrudController::class, 'create'])->name('requirements.crud.create');
-    Route::post('/requirements', [RequirementCrudController::class, 'store'])->name('requirements.crud.store');
-    Route::get('/requirements/{requirement}/edit', [RequirementCrudController::class, 'edit'])->name('requirements.crud.edit');
-    Route::put('/requirements/{requirement}', [RequirementCrudController::class, 'update'])->name('requirements.crud.update');
-    Route::patch('/requirements/{requirement}/toggle-check', [RequirementCrudController::class, 'toggleCheck'])->name('requirements.crud.toggle_check');
-    Route::patch('/requirements/{requirement}/toggle-visible', [RequirementCrudController::class, 'toggleVisible'])->name('requirements.crud.toggle_visible');
-    Route::delete('/requirements/{requirement}', [RequirementCrudController::class, 'destroy'])->name('requirements.crud.destroy');
+    Route::get('/requirements', fn () => redirect()->route('filament.admin.resources.requirements.index'));
+    Route::get('/requirements/create', fn () => redirect()->route('filament.admin.resources.requirements.create'));
+    Route::get('/requirements/{requirement}/edit', fn ($requirement) => redirect()->route('filament.admin.resources.requirements.edit', ['record' => $requirement]));
 
-    Route::get('/document-templates', [DocumentTemplateController::class, 'index'])->name('document_templates.index');
-    Route::post('/document-templates', [DocumentTemplateController::class, 'store'])->name('document_templates.store');
-    Route::delete('/document-templates/{documentTemplate}', [DocumentTemplateController::class, 'destroy'])->name('document_templates.destroy');
+    Route::get('/legacy/requirements', [RequirementCrudController::class, 'index'])->name('requirements.crud.index');
+    Route::get('/legacy/requirements/create', [RequirementCrudController::class, 'create'])->name('requirements.crud.create');
+    Route::post('/legacy/requirements', [RequirementCrudController::class, 'store'])->name('requirements.crud.store');
+    Route::get('/legacy/requirements/{requirement}/edit', [RequirementCrudController::class, 'edit'])->name('requirements.crud.edit');
+    Route::put('/legacy/requirements/{requirement}', [RequirementCrudController::class, 'update'])->name('requirements.crud.update');
+    Route::patch('/legacy/requirements/{requirement}/toggle-check', [RequirementCrudController::class, 'toggleCheck'])->name('requirements.crud.toggle_check');
+    Route::patch('/legacy/requirements/{requirement}/toggle-visible', [RequirementCrudController::class, 'toggleVisible'])->name('requirements.crud.toggle_visible');
+    Route::delete('/legacy/requirements/{requirement}', [RequirementCrudController::class, 'destroy'])->name('requirements.crud.destroy');
+
+    Route::get('/document-templates', fn () => redirect()->route('filament.admin.resources.document-templates.index'))
+        ->name('document_templates.index');
+
+    Route::middleware('admin')->prefix('admin')->name('admin.')->group(function () {
+        Route::get('/users', fn () => redirect()->route('filament.admin.resources.users.index'))->name('users.index');
+        Route::get('/roles', fn () => redirect()->route('filament.admin.resources.roles.index'))->name('roles.index');
+        Route::get('/permissions', fn () => redirect()->route('filament.admin.resources.permissions.index'))->name('permissions.index');
+    });
 });

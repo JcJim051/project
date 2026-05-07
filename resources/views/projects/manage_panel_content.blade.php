@@ -1,0 +1,1174 @@
+    @php
+        $panelFolders = [];
+        $panelRequirements = [];
+
+        foreach ($manageSections as $sectionIndex => $section) {
+            $folderName = $section['name'];
+            $folderKey = 'f_' . $sectionIndex;
+            $items = $section['items'];
+            $sectionGroupCode = (string) ($section['group_code'] ?? '00');
+            if ($sectionGroupCode === '999' && $items->isNotEmpty()) {
+                $probe = $items->first();
+                $probeCode = (string) ($probe->codigo_interno ?? $probe->numeracion ?? '');
+                if (preg_match('/^(\d+)(?:[.\-]|$)/', $probeCode, $m)) {
+                    $n = (int) $m[1];
+                    if ($n >= 1 && $n <= 5) {
+                        $sectionGroupCode = str_pad((string) $n, 2, '0', STR_PAD_LEFT);
+                    }
+                }
+            }
+            $progress = $folderProgress[$folderName] ?? ['total' => $items->count(), 'done' => 0, 'percent' => 0];
+
+            $folderReqIds = [];
+
+            foreach ($items as $req) {
+                $reqEvidences = $evidences[$req->id] ?? collect();
+                $visibleEvidences = $reqEvidences->filter(function ($item) use ($req) {
+                    if (($item->drive_folder_name ?? null) !== ($req->carpeta ?? null)) {
+                        return false;
+                    }
+                    $name = strtolower($item->drive_file_name ?? '');
+                    $isPdf = $item->drive_mime_type === 'application/pdf' || str_ends_with($name, '.pdf');
+                    $isEditable = in_array($item->drive_mime_type, [
+                        'application/vnd.google-apps.document',
+                        'application/vnd.google-apps.spreadsheet',
+                        'application/vnd.google-apps.presentation',
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'application/msword',
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        'application/vnd.ms-excel',
+                        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                        'application/vnd.ms-powerpoint',
+                        'application/vnd.ms-project',
+                        'application/x-msproject',
+                    ], true) || preg_match('/\.(docx?|xlsx?|pptx?|mpp)$/', $name);
+                    return $isPdf || $isEditable;
+                })->values();
+
+                $calcNumeracion = $renumerated[$req->id] ?? $req->codigo_interno ?? $req->numeracion;
+                $validEvidenceCount = $reqEvidences
+                    ->where('in_drive', true)
+                    ->where('drive_folder_name', $req->carpeta)
+                    ->count();
+                $hasEvidence = $validEvidenceCount > 0;
+                $validSources = $reqEvidences
+                    ->where('in_drive', true)
+                    ->where('drive_folder_name', $req->carpeta)
+                    ->pluck('source')
+                    ->filter()
+                    ->map(fn ($source) => strtolower((string) $source))
+                    ->values();
+                $fulfillmentSource = 'none';
+                if ($validSources->contains('manual_link')) {
+                    $fulfillmentSource = 'manual';
+                } elseif ($validSources->contains('auto_match') || $validSources->contains('drive')) {
+                    $fulfillmentSource = 'auto';
+                } elseif ($validSources->contains('upload')) {
+                    $fulfillmentSource = 'upload';
+                }
+
+                $studyName = null;
+                if ($sectionGroupCode === '05') {
+                    $studyName = trim((string) ($req->requisito ?: $req->texto ?: $folderName));
+                }
+
+                $folderReqIds[] = $req->id;
+                $panelRequirements[$req->id] = [
+                    'id' => $req->id,
+                    'folder_key' => $folderKey,
+                    'folder_name' => $folderName,
+                    'group_code' => $sectionGroupCode,
+                    'title' => $req->nombre_documento ?: $req->requisito,
+                    'number' => $calcNumeracion,
+                    'study_name' => $studyName,
+                    'has_evidence' => $hasEvidence,
+                    'valid_evidence_count' => $validEvidenceCount,
+                    'fulfillment_source' => $fulfillmentSource,
+                    'upload_url' => route('projects.manage.upload', [$project, $req]),
+                    'edit_url' => route('filament.admin.resources.requirements.edit', ['record' => $req]),
+                    'drive_files_url' => route('projects.drive.files', $project),
+                    'link_drive_url' => route('projects.requirements.link_drive_file', [$project, $req]),
+                    'bulk_link_url' => route('projects.requirements.link_drive_files_bulk', $project),
+                    'evidences' => $visibleEvidences->map(function ($evidence) use ($project, $req) {
+                        return [
+                            'id' => $evidence->id,
+                            'name' => $evidence->drive_file_name,
+                            'file_id' => $evidence->drive_file_id,
+                            'source' => $evidence->source,
+                            'is_valid' => (bool) $evidence->in_drive,
+                            'unlink_url' => route('projects.requirements.unlink_drive_file', [$project, $req, $evidence]),
+                        ];
+                    })->all(),
+                ];
+            }
+
+            $panelFolders[] = [
+                'key' => $folderKey,
+                'name' => $folderName,
+                'group_code' => $sectionGroupCode,
+                'done' => $progress['done'],
+                'total' => $progress['total'],
+                'percent' => $progress['percent'],
+                'requirement_ids' => $folderReqIds,
+            ];
+        }
+
+        $groupLabels = [
+            '01' => 'Formulacion',
+            '02' => 'Presupuesto',
+            '03' => 'Certificaciones',
+            '04' => 'Licencias y Permisos',
+            '05' => 'Estudios y Disenos',
+        ];
+
+        $panelGroups = [];
+        foreach ($groupLabels as $code => $label) {
+            $subgroups = [];
+            $groupReqIds = [];
+
+            foreach ($panelFolders as $folder) {
+                if (($folder['group_code'] ?? '') !== $code) {
+                    continue;
+                }
+
+                $subReqIds = array_values(array_unique($folder['requirement_ids'] ?? []));
+                $subDone = 0;
+                foreach ($subReqIds as $reqId) {
+                    if (($panelRequirements[$reqId]['has_evidence'] ?? false) === true) {
+                        $subDone++;
+                    }
+                }
+                $subTotal = count($subReqIds);
+                $subPercent = $subTotal > 0 ? (int) round(($subDone / $subTotal) * 100) : 0;
+
+                $subgroups[] = [
+                    'key' => $folder['key'],
+                    'name' => $folder['name'],
+                    'requirement_ids' => $subReqIds,
+                    'done' => $subDone,
+                    'total' => $subTotal,
+                    'percent' => $subPercent,
+                ];
+
+                $groupReqIds = array_merge($groupReqIds, $subReqIds);
+            }
+
+            $groupReqIds = array_values(array_unique($groupReqIds));
+            $done = 0;
+            foreach ($groupReqIds as $reqId) {
+                if (($panelRequirements[$reqId]['has_evidence'] ?? false) === true) {
+                    $done++;
+                }
+            }
+            $total = count($groupReqIds);
+            $percent = $total > 0 ? (int) round(($done / $total) * 100) : 0;
+
+            $panelGroups[] = [
+                'code' => $code,
+                'label' => $label,
+                'subgroups' => $subgroups,
+                'done' => $done,
+                'total' => $total,
+                'percent' => $percent,
+            ];
+        }
+    @endphp
+
+    <style>
+        [x-cloak] { display: none !important; }
+        .manage-shell {
+            background: #f8fafc;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.85rem;
+        }
+        .pane {
+            border: 1px solid #e5e7eb;
+            border-radius: 0.75rem;
+            background: #fff;
+        }
+        .pane-split {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        .pane-head {
+            flex: 0 0 auto;
+        }
+        .pane-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 0.125rem;
+        }
+        .pane-inner {
+            border: 1px solid #eef2f7;
+            border-radius: 0.65rem;
+            background: #fbfdff;
+            padding: 0.75rem;
+        }
+        .tone-01 {
+            background: #f4f9ff;
+            border-color: #dbeafe;
+        }
+        .tone-02 {
+            background: #f8fbf4;
+            border-color: #dcfce7;
+        }
+        .tone-03 {
+            background: #fffaf3;
+            border-color: #fde68a;
+        }
+        .tone-04 {
+            background: #f7f7ff;
+            border-color: #e0e7ff;
+        }
+        .tone-05 {
+            background: #fff7fb;
+            border-color: #fbcfe8;
+        }
+        .group-tone-01 {
+            background: #eff6ff;
+        }
+        .group-tone-02 {
+            background: #f0fdf4;
+        }
+        .group-tone-03 {
+            background: #fffbeb;
+        }
+        .group-tone-04 {
+            background: #eef2ff;
+        }
+        .group-tone-05 {
+            background: #fdf2f8;
+        }
+        .group-card {
+            padding: 0.2rem;
+        }
+        .active-01 {
+            border-color: #93c5fd !important;
+            background: #dbeafe !important;
+        }
+        .active-02 {
+            border-color: #86efac !important;
+            background: #dcfce7 !important;
+        }
+        .active-03 {
+            border-color: #fcd34d !important;
+            background: #fef3c7 !important;
+        }
+        .active-04 {
+            border-color: #a5b4fc !important;
+            background: #e0e7ff !important;
+        }
+        .active-05 {
+            border-color: #f9a8d4 !important;
+            background: #fce7f3 !important;
+        }
+        .manage-main {
+            display: grid;
+            grid-template-columns: repeat(12, minmax(0, 1fr));
+            gap: 1rem;
+        }
+        .manage-left {
+            grid-column: span 6 / span 6;
+        }
+        .manage-right {
+            grid-column: span 6 / span 6;
+            display: grid;
+            gap: 0.75rem;
+            grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+            height: 74vh;
+        }
+        .group-btn {
+            border-bottom: 1px solid #eef2f7;
+        }
+
+        .gp-modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow-y: auto;
+            padding: 0.75rem;
+            background: rgba(0, 0, 0, 0.4);
+        }
+        .gp-modal-card {
+            width: min(48rem, calc(100vw - 1.5rem));
+            max-height: 88vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            background: #fff;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,.1), 0 8px 10px -6px rgba(0,0,0,.1);
+        }
+        .gp-modal-card-lg {
+            width: min(64rem, calc(100vw - 1.5rem));
+            max-height: 88vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            background: #fff;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,.1), 0 8px 10px -6px rgba(0,0,0,.1);
+        }
+        .gp-modal-head,
+        .gp-modal-foot {
+            flex: 0 0 auto;
+            background: #fff;
+        }
+        .gp-modal-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+        }
+        .gp-modal-list {
+            max-height: 38vh;
+            overflow-y: auto;
+        }
+        @media (max-height: 760px) {
+            .gp-modal-card,
+            .gp-modal-card-lg {
+                max-height: 94vh;
+            }
+            .gp-modal-list {
+                max-height: 32vh;
+            }
+        }
+        @media (max-width: 900px) {
+            .manage-main {
+                grid-template-columns: 1fr;
+            }
+            .manage-left,
+            .manage-right {
+                grid-column: span 1 / span 1;
+            }
+            .manage-right {
+                height: auto;
+                grid-template-rows: auto auto;
+            }
+        }
+    </style>
+
+    <script>
+        function projectManagePanelData() {
+            return {
+                groups: @json($panelGroups),
+                requirements: @json($panelRequirements),
+                selectedGroupCode: null,
+                selectedSubgroupKey: null,
+                selectedRequirementId: null,
+                showEvidence: {},
+                onlyPendingGlobal: false,
+                csrfToken: @js(csrf_token()),
+                drivePickerOpen: false,
+                drivePickerLoading: false,
+                drivePickerQuery: "",
+                drivePickerExt: "",
+                drivePickerFiles: [],
+                drivePickerSelected: [],
+                drivePickerMessage: "",
+                bulkOpen: false,
+                bulkLoading: false,
+                bulkFiles: [],
+                bulkRows: [],
+                bulkReport: null,
+                init() {
+                    this.selectInitial();
+                },
+                groupByCode(code) {
+                    return this.groups.find(g => g.code === code) || null;
+                },
+                subgroupByKey(group, key) {
+                    if (!group) return null;
+                    return (group.subgroups || []).find(s => s.key === key) || null;
+                },
+                requirementById(id) {
+                    return this.requirements[id] || null;
+                },
+                requirementVisible(req) {
+                    if (!req) return false;
+                    if (!this.onlyPendingGlobal) return true;
+                    return !req.has_evidence;
+                },
+                currentGroup() {
+                    return this.selectedGroupCode ? this.groupByCode(this.selectedGroupCode) : null;
+                },
+                toneClass() {
+                    const code = this.selectedGroupCode || "01";
+                    return `tone-${code}`;
+                },
+                groupToneClass(code) {
+                    return `group-tone-${code}`;
+                },
+                activeClassFor(code) {
+                    return `active-${code}`;
+                },
+                groupSelectedClass(code) {
+                    return `ring-1 ring-inset ${this.activeClassFor(code)}`;
+                },
+                currentSubgroup() {
+                    const group = this.currentGroup();
+                    if (!group) return null;
+                    return this.subgroupByKey(group, this.selectedSubgroupKey);
+                },
+                selectInitial() {
+                    const firstGroup = this.groups.find(g => (g.subgroups || []).length > 0);
+                    if (!firstGroup) {
+                        this.selectedGroupCode = null;
+                        this.selectedSubgroupKey = null;
+                        this.selectedRequirementId = null;
+                        return;
+                    }
+                    this.selectedGroupCode = firstGroup.code;
+                    const firstSubgroup = (firstGroup.subgroups || []).find(s => (s.requirement_ids || []).length > 0) || (firstGroup.subgroups || [])[0] || null;
+                    this.selectedSubgroupKey = firstSubgroup ? firstSubgroup.key : null;
+                    this.selectedRequirementId = firstSubgroup ? ((firstSubgroup.requirement_ids || [])[0] || null) : null;
+                },
+                selectGroup(code) {
+                    const group = this.groupByCode(code);
+                    if (!group) {
+                        return;
+                    }
+                    this.selectedGroupCode = code;
+                    const subgroup = (group.subgroups || []).find(s => s.key === this.selectedSubgroupKey && this.subgroupHasVisibleRequirements(s))
+                        || (group.subgroups || []).find(s => this.subgroupHasVisibleRequirements(s))
+                        || null;
+                    this.selectedSubgroupKey = subgroup ? subgroup.key : null;
+                    if (!subgroup) {
+                        this.selectedRequirementId = null;
+                        return;
+                    }
+                    const hasCurrentVisible = (subgroup.requirement_ids || [])
+                        .map(id => this.requirementById(id))
+                        .some(r => r && r.id === this.selectedRequirementId && this.requirementVisible(r));
+                    if (!hasCurrentVisible) {
+                        const firstVisible = (subgroup.requirement_ids || [])
+                            .map(id => this.requirementById(id))
+                            .find(r => this.requirementVisible(r));
+                        this.selectedRequirementId = firstVisible ? firstVisible.id : null;
+                    }
+                },
+                isGroupOpen(code) {
+                    return this.selectedGroupCode === code;
+                },
+                selectSubgroup(groupCode, subgroupKey) {
+                    const group = this.groupByCode(groupCode);
+                    if (!group) return;
+                    this.selectedGroupCode = groupCode;
+                    this.selectedSubgroupKey = subgroupKey;
+                    const subgroup = this.subgroupByKey(group, subgroupKey);
+                    if (!subgroup) {
+                        this.selectedRequirementId = null;
+                        return;
+                    }
+                    const hasCurrentVisible = (subgroup.requirement_ids || [])
+                        .map(id => this.requirementById(id))
+                        .some(r => r && r.id === this.selectedRequirementId && this.requirementVisible(r));
+                    if (!hasCurrentVisible) {
+                        const firstVisible = (subgroup.requirement_ids || [])
+                            .map(id => this.requirementById(id))
+                            .find(r => this.requirementVisible(r));
+                        this.selectedRequirementId = firstVisible ? firstVisible.id : null;
+                    }
+                    if (this.bulkOpen) {
+                        this.prepareBulkRows();
+                    }
+                },
+                requirementsInSelectedSubgroup() {
+                    const subgroup = this.currentSubgroup();
+                    if (!subgroup) return [];
+                    return (subgroup.requirement_ids || [])
+                        .map(id => this.requirementById(id))
+                        .filter(Boolean);
+                },
+                visibleRequirementsInSelectedSubgroup() {
+                    const list = this.requirementsInSelectedSubgroup();
+                    return list.filter(req => this.requirementVisible(req));
+                },
+                subgroupHasVisibleRequirements(subgroup) {
+                    if (!subgroup) return false;
+                    const list = (subgroup.requirement_ids || [])
+                        .map(id => this.requirementById(id))
+                        .filter(Boolean);
+                    return list.some(req => this.requirementVisible(req));
+                },
+                groupHasVisibleRequirements(group) {
+                    if (!group) return false;
+                    return (group.subgroups || []).some(sub => this.subgroupHasVisibleRequirements(sub));
+                },
+                firstVisibleSelection() {
+                    for (const group of this.groups) {
+                        if (!this.groupHasVisibleRequirements(group)) continue;
+                        for (const sub of (group.subgroups || [])) {
+                            if (!this.subgroupHasVisibleRequirements(sub)) continue;
+                            const req = (sub.requirement_ids || [])
+                                .map(id => this.requirementById(id))
+                                .find(r => this.requirementVisible(r));
+                            if (req) {
+                                return {
+                                    groupCode: group.code,
+                                    subgroupKey: sub.key,
+                                    requirementId: req.id
+                                };
+                            }
+                        }
+                    }
+                    return null;
+                },
+                toggleOnlyPendingGlobal() {
+                    this.onlyPendingGlobal = !this.onlyPendingGlobal;
+                    const currentReq = this.currentRequirement();
+                    if (currentReq && this.requirementVisible(currentReq)) {
+                        return;
+                    }
+                    const next = this.firstVisibleSelection();
+                    if (!next) {
+                        this.selectedGroupCode = null;
+                        this.selectedSubgroupKey = null;
+                        this.selectedRequirementId = null;
+                        return;
+                    }
+                    this.selectedGroupCode = next.groupCode;
+                    this.selectedSubgroupKey = next.subgroupKey;
+                    this.selectedRequirementId = next.requirementId;
+                },
+                selectRequirement(folderKey, reqId) {
+                    this.selectedRequirementId = reqId;
+                    const req = this.requirementById(reqId);
+                    if (!req) return;
+                    this.selectedSubgroupKey = req.folder_key;
+                    this.selectedGroupCode = req.group_code;
+                },
+                currentRequirement() {
+                    return this.requirementById(this.selectedRequirementId);
+                },
+                fulfillmentLabel(req) {
+                    if (!req || !req.has_evidence) return "Pendiente";
+                    if (req.fulfillment_source === "manual") return "Suplido manual";
+                    if (req.fulfillment_source === "auto") return "Suplido auto";
+                    if (req.fulfillment_source === "upload") return "Suplido por carga";
+                    return "Suplido";
+                },
+                fulfillmentClass(req) {
+                    if (!req || !req.has_evidence) return "bg-gray-100 text-gray-600";
+                    if (req.fulfillment_source === "manual") return "bg-violet-100 text-violet-700";
+                    if (req.fulfillment_source === "auto") return "bg-emerald-100 text-emerald-700";
+                    return "bg-sky-100 text-sky-700";
+                },
+                firstEvidenceLink(req) {
+                    if (!req || !Array.isArray(req.evidences)) return null;
+                    const found = req.evidences.find(e => !!e.file_id);
+                    return found ? `https://drive.google.com/file/d/${found.file_id}/view` : null;
+                },
+                async loadDriveFiles(req) {
+                    if (!req) return;
+                    this.drivePickerLoading = true;
+                    this.drivePickerMessage = "";
+                    const params = new URLSearchParams({
+                        requirement_id: String(req.id),
+                        per_page: "200",
+                    });
+                    if (this.drivePickerQuery.trim() !== "") params.set("q", this.drivePickerQuery.trim());
+                    if (this.drivePickerExt.trim() !== "") params.set("ext", this.drivePickerExt.trim());
+                    try {
+                        const response = await fetch(`${req.drive_files_url}?${params.toString()}`, {
+                            headers: {
+                                "Accept": "application/json",
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                            credentials: "same-origin",
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.message || "No se pudo listar archivos de Drive.");
+                        this.drivePickerFiles = data.data || [];
+                        this.drivePickerMessage = `Encontrados: ${data.total || 0} archivo(s).`;
+                    } catch (error) {
+                        this.drivePickerFiles = [];
+                        this.drivePickerMessage = error.message || "Error listando archivos de Drive.";
+                    } finally {
+                        this.drivePickerLoading = false;
+                    }
+                },
+                async openDrivePicker() {
+                    const req = this.currentRequirement();
+                    if (!req) return;
+                    this.drivePickerOpen = true;
+                    this.drivePickerSelected = [];
+                    await this.loadDriveFiles(req);
+                },
+                closeDrivePicker() {
+                    this.drivePickerOpen = false;
+                    this.drivePickerSelected = [];
+                    this.drivePickerMessage = "";
+                },
+                async submitManualLink() {
+                    const req = this.currentRequirement();
+                    if (!req || this.drivePickerSelected.length === 0) return;
+                    this.drivePickerLoading = true;
+                    this.drivePickerMessage = "";
+                    try {
+                        const response = await fetch(req.link_drive_url, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Accept": "application/json",
+                                "X-CSRF-TOKEN": this.csrfToken,
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                            credentials: "same-origin",
+                            body: JSON.stringify({
+                                file_ids: this.drivePickerSelected,
+                            }),
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.message || "No se pudo vincular el archivo.");
+                        window.location.reload();
+                    } catch (error) {
+                        this.drivePickerMessage = error.message || "Error vinculando archivos.";
+                    } finally {
+                        this.drivePickerLoading = false;
+                    }
+                },
+                normalizeText(v) {
+                    return (v || "")
+                        .normalize("NFD")
+                        .replace(/[\u0300-\u036f]/g, "")
+                        .toLowerCase()
+                        .replace(/[^a-z0-9 ]+/g, " ")
+                        .replace(/\s+/g, " ")
+                        .trim();
+                },
+                suggestedFileIdFor(req, files) {
+                    const target = this.normalizeText(req.title);
+                    if (!target) return "";
+                    for (const file of files) {
+                        const base = this.normalizeText((file.name || "").replace(/\.[^.]+$/, ""));
+                        if (base === target || base.includes(target) || target.includes(base)) {
+                            return file.id || "";
+                        }
+                    }
+                    return "";
+                },
+                async openBulkLinker() {
+                    const reqs = this.visibleRequirementsInSelectedSubgroup();
+                    if (reqs.length === 0) return;
+                    const sample = reqs[0];
+                    this.bulkOpen = true;
+                    this.bulkLoading = true;
+                    this.bulkReport = null;
+                    try {
+                        const params = new URLSearchParams({
+                            requirement_id: String(sample.id),
+                            per_page: "200",
+                        });
+                        const response = await fetch(`${sample.drive_files_url}?${params.toString()}`, {
+                            headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+                            credentials: "same-origin",
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.message || "No se pudo cargar archivos de Drive.");
+                        this.bulkFiles = data.data || [];
+                        this.prepareBulkRows();
+                    } catch (error) {
+                        this.bulkFiles = [];
+                        this.bulkRows = [];
+                        this.bulkReport = { error: error.message || "Error en vinculación masiva." };
+                    } finally {
+                        this.bulkLoading = false;
+                    }
+                },
+                prepareBulkRows() {
+                    const reqs = this.visibleRequirementsInSelectedSubgroup();
+                    this.bulkRows = reqs.map(req => ({
+                        requirement_id: req.id,
+                        title: req.title,
+                        selected_file_id: this.suggestedFileIdFor(req, this.bulkFiles),
+                    }));
+                },
+                closeBulkLinker() {
+                    this.bulkOpen = false;
+                    this.bulkRows = [];
+                    this.bulkFiles = [];
+                    this.bulkReport = null;
+                },
+                async submitBulkLink() {
+                    const req = this.currentRequirement();
+                    if (!req) return;
+                    const links = this.bulkRows
+                        .filter(row => row.selected_file_id)
+                        .map(row => ({
+                            requirement_id: row.requirement_id,
+                            file_id: row.selected_file_id,
+                        }));
+                    if (links.length === 0) return;
+
+                    this.bulkLoading = true;
+                    this.bulkReport = null;
+                    try {
+                        const response = await fetch(req.bulk_link_url, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Accept": "application/json",
+                                "X-CSRF-TOKEN": this.csrfToken,
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                            credentials: "same-origin",
+                            body: JSON.stringify({ links }),
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.message || "No se pudo ejecutar la vinculación masiva.");
+                        this.bulkReport = data;
+                        setTimeout(() => window.location.reload(), 900);
+                    } catch (error) {
+                        this.bulkReport = { error: error.message || "Error en vinculación masiva." };
+                    } finally {
+                        this.bulkLoading = false;
+                    }
+                },
+                async unlinkEvidence(evidence) {
+                    if (!evidence || !evidence.unlink_url) return;
+                    if (!confirm("¿Quitar esta asignación?")) return;
+                    try {
+                        const response = await fetch(evidence.unlink_url, {
+                            method: "DELETE",
+                            headers: {
+                                "Accept": "application/json",
+                                "X-CSRF-TOKEN": this.csrfToken,
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                            credentials: "same-origin",
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.message || "No se pudo quitar la asignación.");
+                        window.location.reload();
+                    } catch (error) {
+                        alert(error.message || "Error quitando la asignación.");
+                    }
+                },
+                goNextMissing() {
+                    const list = this.requirementsInSelectedSubgroup();
+                    if (list.length === 0) return;
+
+                    const missingIds = list.filter(r => !r.has_evidence).map(r => r.id);
+                    if (missingIds.length === 0) return;
+
+                    const idx = missingIds.indexOf(this.selectedRequirementId);
+                    const nextId = idx >= 0 && idx < missingIds.length - 1 ? missingIds[idx + 1] : missingIds[0];
+                    const req = this.requirementById(nextId);
+                    if (!req) return;
+                    this.selectedRequirementId = nextId;
+                    this.selectedSubgroupKey = req.folder_key;
+                    this.selectedGroupCode = req.group_code;
+                }
+            };
+        }
+    </script>
+
+    <div class="py-1">
+        <div
+            class="w-full space-y-3"
+            x-data="projectManagePanelData()"
+            x-init="init()"
+        >
+            @if (session('status'))
+                <div class="rounded-md bg-emerald-50 p-4 text-emerald-700 text-sm">
+                    {{ session('status') }}
+                </div>
+            @endif
+
+            @if ($errors->any())
+                <div class="rounded-md bg-rose-50 p-4 text-rose-700 text-sm">
+                    {{ $errors->first() }}
+                </div>
+            @endif
+
+            @if (!$driveConnected)
+                <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm flex items-center justify-between">
+                    <span>Conecta Google Drive para sincronizar evidencias automaticamente.</span>
+                    <a href="{{ route('drive.auth', ['return' => route('filament.admin.resources.projects.manage', ['record' => $project])]) }}" class="text-amber-700 font-semibold hover:text-amber-800">
+                        Conectar Drive
+                    </a>
+                </div>
+            @elseif (!$project->drive_folder_id)
+                <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm">
+                    Este proyecto no tiene carpeta de Drive configurada. Agrega la ruta en Editar proyecto.
+                </div>
+            @elseif ($driveConnected && $driveReady)
+                <div class="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-sky-700 text-sm flex items-center justify-between gap-2">
+                    <span class="font-medium">Drive conectado.</span>
+                    <div class="flex items-center gap-2">
+                        <a href="{{ route('filament.admin.resources.projects.manage', ['record' => $project]) }}?sync=1" class="h-8 px-3 inline-flex items-center rounded-md border border-sky-300 bg-white text-sky-700 text-xs font-medium hover:bg-sky-100 transition-colors">
+                            Sincronizar ahora
+                        </a>
+                        <a href="{{ route('filament.admin.resources.projects.manage', ['record' => $project]) }}?sync=1&debug=1" class="h-8 px-3 inline-flex items-center rounded-md border border-sky-300 bg-white text-sky-700 text-xs font-medium hover:bg-sky-100 transition-colors">
+                            Sincronizar + reporte
+                        </a>
+                    </div>
+                </div>
+            @endif
+
+            @if ($syncReport)
+                <details class="rounded-md border border-sky-100 bg-sky-50/40 p-4 text-sm text-sky-800">
+                    <summary class="cursor-pointer font-semibold">Reporte de sincronizacion (debug)</summary>
+                    @php
+                        $folders = $syncReport['folders'] ?? [];
+                        $matchedByFolder = collect($syncReport['matched'] ?? [])->groupBy('folder');
+                        $unmatchedByFolder = collect($syncReport['unmatched'] ?? [])->groupBy('folder');
+                    @endphp
+                    <div class="mt-3 space-y-3">
+                        <div>Total archivos detectados: {{ $syncReport['total'] }}</div>
+                        <div>Coincidencias: {{ count($syncReport['matched']) }} | Sin coincidencia: {{ count($syncReport['unmatched']) }}</div>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            @foreach ($folders as $folderName => $folderId)
+                                <div class="rounded-md border border-sky-100 bg-white/60 p-3 text-xs text-sky-700 space-y-2">
+                                    <div class="font-semibold">{{ $folderName }}</div>
+                                    @if (!$folderId)
+                                        <div>No se encontro la carpeta en Drive.</div>
+                                        @continue
+                                    @endif
+                                    @if ($matchedByFolder->get($folderName, collect())->isNotEmpty())
+                                        <div>
+                                            <div class="font-semibold mb-1">Coincidencias</div>
+                                            <div class="space-y-1">
+                                                @foreach ($matchedByFolder->get($folderName, collect()) as $item)
+                                                    <div>Archivo: {{ $item['file'] }} -> {{ $item['requirement'] }}</div>
+                                                @endforeach
+                                            </div>
+                                        </div>
+                                    @endif
+                                    @if ($unmatchedByFolder->get($folderName, collect())->isNotEmpty())
+                                        <div>
+                                            <div class="font-semibold mb-1">Sin coincidencia</div>
+                                            <div class="space-y-1">
+                                                @foreach ($unmatchedByFolder->get($folderName, collect()) as $item)
+                                                    <div>Archivo: {{ $item['name'] }}</div>
+                                                @endforeach
+                                            </div>
+                                        </div>
+                                    @endif
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+                </details>
+            @endif
+
+            <div class="manage-shell shadow-sm p-4 sm:p-6">
+                <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-800">Requisitos Aplicables</h3>
+                        <p class="text-sm text-gray-500">Panel maestro-detalle para gestionar evidencias por grupo.</p>
+                    </div>
+                    <div class="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+                        <a
+                            href="{{ route('projects.documents', $project) }}"
+                            class="h-8 px-3 inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors">
+                            Crear certificaciones
+                        </a>
+                        <button
+                            type="button"
+                            @click="toggleOnlyPendingGlobal()"
+                            class="px-2 py-1 rounded border text-xs transition"
+                            :class="onlyPendingGlobal ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'">
+                            Solo pendientes (Global)
+                        </button>
+                        <div class="text-sm text-gray-600">
+                            <span class="font-semibold text-gray-800">Avance general:</span>
+                            {{ $overallPercent }}% ({{ $folderProgress ? array_sum(array_column($folderProgress, 'done')) : 0 }} de {{ $folderProgress ? array_sum(array_column($folderProgress, 'total')) : 0 }})
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <div class="h-1.5 w-44 rounded-full bg-gray-200">
+                        <div class="h-1.5 rounded-full bg-emerald-500" style="width: {{ $overallPercent }}%"></div>
+                    </div>
+                </div>
+
+                @if ($requirements->isEmpty())
+                    <div class="rounded-md border border-dashed border-gray-300 p-6 text-center text-gray-500">
+                        No hay requisitos marcados. Usa la vista de Requisitos para seleccionarlos.
+                    </div>
+                @else
+                    <div class="manage-main">
+                        <aside class="pane pane-split manage-left p-3">
+                            <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                                <div class="text-[11px] uppercase tracking-wide text-gray-500">Seccion</div>
+                                <div class="text-sm font-semibold text-gray-800">Grupos de requisitos (01-05)</div>
+                            </div>
+                            <div class="pane-body px-1 py-1 space-y-3">
+                                <template x-for="group in groups" :key="group.code">
+                                    <div x-show="groupHasVisibleRequirements(group)" class="rounded-md border border-gray-200 bg-white overflow-hidden">
+                                        <button
+                                            type="button"
+                                            class="w-full text-left group-card"
+                                            :class="[groupToneClass(group.code), isGroupOpen(group.code) ? groupSelectedClass(group.code) : '']"
+                                            @click="selectGroup(group.code)">
+                                            <div class="flex items-center justify-between gap-3 px-3 py-2">
+                                                <div>
+                                                    <div class="text-xs text-gray-500" x-text="group.code"></div>
+                                                    <div class="text-sm font-semibold text-gray-800" x-text="group.label"></div>
+                                                </div>
+                                                <div class="text-xs text-gray-600" x-text="`${group.done}/${group.total}`"></div>
+                                            </div>
+                                            <div class="mt-1 mb-1 mx-3 h-1.5 rounded-full bg-gray-100">
+                                                <div class="h-1.5 rounded-full bg-emerald-500" :style="`width:${group.percent}%`"></div>
+                                            </div>
+                                        </button>
+                                        <div x-show="isGroupOpen(group.code)" class="px-3 pb-3 space-y-1">
+                                            <template x-if="(group.subgroups || []).length === 0">
+                                                <div class="text-xs text-gray-500">Sin subgrupos</div>
+                                            </template>
+                                            <template x-for="sub in (group.subgroups || [])" :key="`sub-${sub.key}`">
+                                                <button
+                                                    x-show="subgroupHasVisibleRequirements(sub)"
+                                                    type="button"
+                                                    @click="selectSubgroup(group.code, sub.key)"
+                                                    class="w-full rounded-md border px-2 py-2 text-left transition"
+                                                    :class="selectedSubgroupKey === sub.key ? activeClassFor(group.code) : 'border-gray-200 bg-white hover:bg-gray-50'">
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <div class="text-xs font-medium text-gray-700 truncate" x-text="sub.name"></div>
+                                                        <div class="text-[11px] text-gray-500" x-text="`${sub.done}/${sub.total}`"></div>
+                                                    </div>
+                                                </button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </aside>
+
+                        <section class="manage-right">
+                            <div class="pane pane-split p-3">
+                                <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                                    <div class="text-[11px] uppercase tracking-wide text-gray-500">Seccion</div>
+                                    <div class="text-sm font-semibold text-gray-800">Requisitos del subgrupo activo</div>
+                                </div>
+                                <div class="pane-body">
+                                    <div class="pane-inner" :class="toneClass()">
+                                    <template x-if="currentSubgroup()">
+                                        <div class="text-xs text-gray-600 mb-2" x-text="currentSubgroup().name"></div>
+                                    </template>
+                                    <template x-if="visibleRequirementsInSelectedSubgroup().length === 0">
+                                        <div class="text-sm text-gray-500">No hay requisitos en el subgrupo seleccionado.</div>
+                                    </template>
+                                    <div class="space-y-1.5">
+                                        <template x-for="req in visibleRequirementsInSelectedSubgroup()" :key="`right-top-${req.id}`">
+                                            <div
+                                                @click="selectRequirement(req.folder_key, req.id)"
+                                                class="w-full rounded-md border px-2 py-2 text-left transition cursor-pointer"
+                                                :class="selectedRequirementId === req.id ? activeClassFor(selectedGroupCode || &quot;01&quot;) : 'border-gray-200 bg-white hover:bg-gray-50'">
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <a :href="req.edit_url" @click.stop target="_blank" rel="noopener" class="text-xs font-medium text-indigo-700 hover:text-indigo-800 hover:underline truncate" x-text="req.title"></a>
+                                                        <template x-if="firstEvidenceLink(req)">
+                                                            <a :href="firstEvidenceLink(req)" target="_blank" rel="noopener" class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">Ver</a>
+                                                        </template>
+                                                        <template x-if="!firstEvidenceLink(req)">
+                                                            <span class="text-[11px] text-gray-500">Pendiente</span>
+                                                        </template>
+                                                    </div>
+                                                    <div class="mt-1">
+                                                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium" :class="fulfillmentClass(req)" x-text="fulfillmentLabel(req)"></span>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="pane pane-split p-3">
+                                <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                                    <div class="text-[11px] uppercase tracking-wide text-gray-500">Seccion</div>
+                                    <div class="text-sm font-semibold text-gray-800">Detalle del requisito activo</div>
+                                </div>
+                                <div class="pane-body">
+                                    <div class="pane-inner space-y-4" :class="toneClass()">
+                                        <template x-if="!currentRequirement()">
+                                            <div class="text-sm text-gray-500">Selecciona un requisito para ver el detalle.</div>
+                                        </template>
+
+                                        <template x-if="currentRequirement()">
+                                            <div class="space-y-4">
+                                                <div class="text-sm font-semibold text-gray-800" x-text="currentRequirement().title"></div>
+                                                <div>
+                                                    <span
+                                                        class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium"
+                                                        :class="currentRequirement().has_evidence ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'"
+                                                        x-text="currentRequirement().has_evidence ? `${currentRequirement().valid_evidence_count} evidencia(s)` : 'Sin evidencia'"></span>
+                                                    <span class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium ml-2" :class="fulfillmentClass(currentRequirement())" x-text="fulfillmentLabel(currentRequirement())"></span>
+                                                </div>
+
+                                                <div class="flex items-center gap-2">
+                                                    <button type="button" @click="openDrivePicker()" class="h-8 px-3 rounded-md border border-violet-200 bg-violet-50 text-violet-700 text-xs font-medium hover:bg-violet-100">
+                                                        Vincular archivo de Drive
+                                                    </button>
+                                                    <button type="button" @click="openBulkLinker()" class="h-8 px-3 rounded-md border border-sky-200 bg-sky-50 text-sky-700 text-xs font-medium hover:bg-sky-100">
+                                                        Vinculación masiva
+                                                    </button>
+                                                </div>
+
+                                                <div class="space-y-2">
+                                                    <template x-if="(currentRequirement().evidences || []).length === 0">
+                                                        <div class="text-xs text-gray-500">No hay evidencias visibles para este requisito.</div>
+                                                    </template>
+                                                    <template x-for="(evidence, i) in (currentRequirement().evidences || [])" :key="`evi-${i}`">
+                                                        <div class="rounded-md border border-gray-200 p-2 text-xs">
+                                                            <div class="flex items-start justify-between gap-2">
+                                                                <div class="font-medium text-gray-700 truncate" x-text="evidence.name"></div>
+                                                            <div class="flex items-center gap-2 shrink-0">
+                                                                <a
+                                                                    x-show="evidence.file_id"
+                                                                    :href="`https://drive.google.com/file/d/${evidence.file_id}/view`"
+                                                                    target="_blank"
+                                                                    rel="noopener"
+                                                                    class="text-indigo-600 hover:text-indigo-700">
+                                                                    Ver
+                                                                </a>
+                                                                <button
+                                                                    type="button"
+                                                                    x-show="evidence.source === 'manual_link'"
+                                                                    @click="unlinkEvidence(evidence)"
+                                                                    class="text-rose-600 hover:text-rose-700">
+                                                                    Quitar
+                                                                </button>
+                                                                <span x-show="!evidence.file_id" class="text-[11px] text-gray-500">Pendiente</span>
+                                                            </div>
+                                                            </div>
+                                                            <div class="text-[11px]" :class="evidence.is_valid ? 'text-emerald-600' : 'text-amber-700'" x-text="evidence.is_valid ? 'Evidencia válida' : 'No disponible o no válida para este requisito'"></div>
+                                                        </div>
+                                                    </template>
+                                                </div>
+
+                                                <form method="POST" enctype="multipart/form-data" :action="currentRequirement().upload_url" class="space-y-3 pt-1">
+                                                    @csrf
+                                                    <div>
+                                                        <label class="text-xs font-medium text-gray-600">Cargar evidencias</label>
+                                                        <input type="file" name="archivos[]" multiple class="mt-1 block w-full text-xs text-gray-700">
+                                                    </div>
+                                                    <div class="sticky bottom-0 pt-2">
+                                                        <button
+                                                            type="submit"
+                                                            class="w-full h-9 rounded-md text-xs font-medium shadow-sm border"
+                                                            style="background:#4f46e5;color:#ffffff;border-color:#4338ca;">
+                                                            Enviar
+                                                        </button>
+                                                    </div>
+                                                </form>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                @endif
+            </div>
+
+            <div x-show="drivePickerOpen" x-cloak @click.self="closeDrivePicker()" x-on:keydown.escape.window="closeDrivePicker()" class="gp-modal-overlay">
+                <div class="gp-modal-card">
+                    <div class="gp-modal-head px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                        <div class="text-sm font-semibold text-gray-800">Vincular archivo de Drive</div>
+                        <button type="button" @click="closeDrivePicker()" class="text-xs text-gray-500 hover:text-gray-700">Cerrar</button>
+                    </div>
+                    <div class="gp-modal-body p-4 space-y-3">
+                        <div class="flex items-center gap-2">
+                            <input x-model="drivePickerQuery" type="text" placeholder="Buscar por nombre..." class="flex-1 rounded-md border-gray-300 text-xs">
+                            <input x-model="drivePickerExt" type="text" placeholder="ext (pdf/xlsx/mpp)" class="w-40 rounded-md border-gray-300 text-xs">
+                            <button type="button" @click="loadDriveFiles(currentRequirement())" class="h-8 px-3 rounded-md border border-gray-300 text-xs text-gray-700 hover:bg-gray-50">Buscar</button>
+                        </div>
+                        <div class="text-xs text-gray-500" x-text="drivePickerMessage"></div>
+                        <div class="gp-modal-list border border-gray-100 rounded-md">
+                            <template x-if="drivePickerLoading">
+                                <div class="p-3 text-xs text-gray-500">Cargando archivos...</div>
+                            </template>
+                            <template x-if="!drivePickerLoading && drivePickerFiles.length === 0">
+                                <div class="p-3 text-xs text-gray-500">No hay archivos para mostrar.</div>
+                            </template>
+                            <template x-for="file in drivePickerFiles" :key="`pick-${file.id}`">
+                                <label class="flex items-start gap-3 px-3 py-2 border-b border-gray-50 text-xs">
+                                    <input type="checkbox" :value="file.id" x-model="drivePickerSelected" class="mt-0.5 rounded border-gray-300">
+                                    <div class="min-w-0">
+                                        <div class="font-medium text-gray-700 truncate" x-text="file.name"></div>
+                                        <div class="text-[11px] text-gray-500" x-text="file.ext ? `.${file.ext}` : 'sin extensión'"></div>
+                                    </div>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="gp-modal-foot px-4 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                        <button type="button" @click="closeDrivePicker()" class="h-8 px-3 rounded-md border border-gray-300 text-xs text-gray-700 hover:bg-gray-50">Cancelar</button>
+                        <button type="button" @click="submitManualLink()" :disabled="drivePickerLoading || drivePickerSelected.length === 0" class="h-8 px-3 rounded-md text-xs font-medium disabled:opacity-50" style="background:#7c3aed;color:#fff;border:1px solid #6d28d9;">Vincular seleccionados</button>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="bulkOpen" x-cloak @click.self="closeBulkLinker()" x-on:keydown.escape.window="closeBulkLinker()" class="gp-modal-overlay">
+                <div class="gp-modal-card-lg">
+                    <div class="gp-modal-head px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                        <div class="text-sm font-semibold text-gray-800">Vinculación masiva por subgrupo</div>
+                        <button type="button" @click="closeBulkLinker()" class="text-xs text-gray-500 hover:text-gray-700">Cerrar</button>
+                    </div>
+                    <div class="gp-modal-body p-4 space-y-3">
+                        <template x-if="bulkLoading">
+                            <div class="text-xs text-gray-500">Cargando candidatos...</div>
+                        </template>
+                        <template x-if="!bulkLoading">
+                            <div class="gp-modal-list border border-gray-100 rounded-md">
+                                <table class="min-w-full text-xs">
+                                    <thead class="bg-gray-50 text-gray-600">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left">Requisito</th>
+                                            <th class="px-3 py-2 text-left">Archivo vinculado</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="row in bulkRows" :key="`bulk-${row.requirement_id}`">
+                                            <tr class="border-t border-gray-100">
+                                                <td class="px-3 py-2 text-gray-700" x-text="row.title"></td>
+                                                <td class="px-3 py-2">
+                                                    <select x-model="row.selected_file_id" class="w-full rounded-md border-gray-300 text-xs">
+                                                        <option value="">-- Sin selección --</option>
+                                                        <template x-for="file in bulkFiles" :key="`opt-${row.requirement_id}-${file.id}`">
+                                                            <option :value="file.id" x-text="file.name"></option>
+                                                        </template>
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </template>
+                        <template x-if="bulkReport">
+                            <div class="text-xs rounded-md border p-2"
+                                :class="bulkReport.error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'">
+                                <span x-show="bulkReport.error" x-text="bulkReport.error"></span>
+                                <span x-show="!bulkReport.error" x-text="`Vinculados: ${bulkReport.linked_count || 0} | Omitidos: ${bulkReport.omitted_count || 0} | Conflictos: ${bulkReport.conflicts_count || 0}`"></span>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="gp-modal-foot px-4 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                        <button type="button" @click="closeBulkLinker()" class="h-8 px-3 rounded-md border border-gray-300 text-xs text-gray-700 hover:bg-gray-50">Cancelar</button>
+                        <button type="button" @click="submitBulkLink()" :disabled="bulkLoading" class="h-8 px-3 rounded-md bg-sky-600 text-white text-xs font-medium disabled:opacity-50">Aplicar vínculo masivo</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="rounded-md border border-indigo-100 bg-indigo-50/40 p-3 flex items-center justify-between mt-3">
+                <div>
+                    <div class="text-xs font-semibold text-indigo-700">Paquete PDF con adjuntos</div>
+                </div>
+                <a
+                    href="{{ route('filament.admin.resources.projects.attachments', ['record' => $project]) }}"
+                    class="px-3 py-1.5 rounded-md bg-white text-indigo-700 text-xs font-semibold border border-indigo-200 hover:bg-indigo-50">
+                    Abrir modulo
+                </a>
+            </div>
+        </div>
+    </div>

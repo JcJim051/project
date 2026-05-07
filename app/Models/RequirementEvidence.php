@@ -20,11 +20,15 @@ class RequirementEvidence extends Model
         'drive_modified_time',
         'drive_folder_name',
         'source',
+        'linked_by_user_id',
+        'linked_at',
+        'link_note',
         'in_drive',
     ];
 
     protected $casts = [
         'drive_modified_time' => 'datetime',
+        'linked_at' => 'datetime',
         'in_drive' => 'boolean',
     ];
 
@@ -36,5 +40,10 @@ class RequirementEvidence extends Model
     public function requirement()
     {
         return $this->belongsTo(Requirement::class);
+    }
+
+    public function linkedBy()
+    {
+        return $this->belongsTo(User::class, 'linked_by_user_id');
     }
 }

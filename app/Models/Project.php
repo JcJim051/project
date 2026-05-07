@@ -52,4 +52,9 @@ class Project extends Model
     {
         return $this->hasMany(RequirementEvidence::class);
     }
+
+    public function attachmentPackageRuns()
+    {
+        return $this->hasMany(AttachmentPackageRun::class);
+    }
 }

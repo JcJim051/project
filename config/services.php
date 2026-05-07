@@ -35,6 +35,14 @@ return [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
         'redirect' => env('GOOGLE_REDIRECT_URI'),
+        'timeout' => (int) env('GOOGLE_HTTP_TIMEOUT', 120),
+        'connect_timeout' => (int) env('GOOGLE_HTTP_CONNECT_TIMEOUT', 20),
+        'download_retries' => (int) env('GOOGLE_DOWNLOAD_RETRIES', 4),
+    ],
+
+    'attachments_pdf' => [
+        'python_bin' => env('ATTACHMENTS_PDF_PYTHON_BIN', 'python3'),
+        'script_path' => env('ATTACHMENTS_PDF_SCRIPT_PATH', base_path('scripts/generate_attachment_pdfs.py')),
     ],
 
 ];

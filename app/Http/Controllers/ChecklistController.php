@@ -97,6 +97,12 @@ class ChecklistController extends Controller
         $ids = $data['aplica'] ?? [];
         $project->requisitos()->sync($ids);
 
+        if ($request->boolean('panel_return')) {
+            return redirect()
+                ->route('filament.admin.resources.projects.checklist', ['record' => $project])
+                ->with('status', 'Checklist actualizado.');
+        }
+
         return redirect()->route('projects.checklist', $project)->with('status', 'Checklist actualizado.');
     }
 

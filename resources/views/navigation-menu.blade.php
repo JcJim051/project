@@ -13,13 +13,19 @@
                 <!-- Navigation Links -->
                 <div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
                     <x-nav-link href="{{ route('dashboard') }}" :active="request()->routeIs('dashboard')">
-                        {{ __('Dashboard') }}
+                        {{ __('Mis proyectos') }}
                     </x-nav-link>
-                    @if (auth()->user()?->is_admin)
-                        <x-nav-link href="{{ route('requirements.crud.index') }}" :active="request()->routeIs('requirements.crud.*')">
+                    @if (auth()->user() && (auth()->user()->is_admin || auth()->user()->hasRole('admin')))
+                        <x-nav-link href="{{ route('filament.admin.resources.requirements.index') }}" :active="request()->routeIs('filament.admin.resources.requirements.*')">
                             {{ __('Requisitos') }}
                         </x-nav-link>
-                        <x-nav-link href="{{ route('document_templates.index') }}" :active="request()->routeIs('document_templates.*')">
+                        <x-nav-link href="{{ route('filament.admin.pages.dashboard') }}" :active="request()->routeIs('filament.admin.*')">
+                            {{ __('Panel Admin') }}
+                        </x-nav-link>
+                        <x-nav-link href="{{ url('/panel/drive-oauth-settings') }}" :active="request()->is('panel/drive-oauth-settings*')">
+                            {{ __('Drive OAuth') }}
+                        </x-nav-link>
+                        <x-nav-link href="{{ route('filament.admin.resources.document-templates.index') }}" :active="request()->routeIs('filament.admin.resources.document-templates.*')">
                             {{ __('Plantillas') }}
                         </x-nav-link>
                     @endif
@@ -148,13 +154,19 @@
     <div :class="{'block': open, 'hidden': ! open}" class="hidden sm:hidden">
         <div class="pt-2 pb-3 space-y-1">
             <x-responsive-nav-link href="{{ route('dashboard') }}" :active="request()->routeIs('dashboard')">
-                {{ __('Dashboard') }}
+                {{ __('Mis proyectos') }}
             </x-responsive-nav-link>
-            @if (auth()->user()?->is_admin)
-                <x-responsive-nav-link href="{{ route('requirements.crud.index') }}" :active="request()->routeIs('requirements.crud.*')">
+            @if (auth()->user() && (auth()->user()->is_admin || auth()->user()->hasRole('admin')))
+                <x-responsive-nav-link href="{{ route('filament.admin.resources.requirements.index') }}" :active="request()->routeIs('filament.admin.resources.requirements.*')">
                     {{ __('Requisitos') }}
                 </x-responsive-nav-link>
-                <x-responsive-nav-link href="{{ route('document_templates.index') }}" :active="request()->routeIs('document_templates.*')">
+                <x-responsive-nav-link href="{{ route('filament.admin.pages.dashboard') }}" :active="request()->routeIs('filament.admin.*')">
+                    {{ __('Panel Admin') }}
+                </x-responsive-nav-link>
+                <x-responsive-nav-link href="{{ url('/panel/drive-oauth-settings') }}" :active="request()->is('panel/drive-oauth-settings*')">
+                    {{ __('Drive OAuth') }}
+                </x-responsive-nav-link>
+                <x-responsive-nav-link href="{{ route('filament.admin.resources.document-templates.index') }}" :active="request()->routeIs('filament.admin.resources.document-templates.*')">
                     {{ __('Plantillas') }}
                 </x-responsive-nav-link>
             @endif

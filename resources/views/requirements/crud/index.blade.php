@@ -24,21 +24,58 @@
             @endif
 
             <div class="bg-white shadow-sm sm:rounded-lg p-6">
+                <form method="GET" action="{{ route('requirements.crud.index') }}" class="mb-4 grid gap-3 md:grid-cols-5">
+                    <input
+                        type="text"
+                        name="q"
+                        value="{{ request('q') }}"
+                        placeholder="Buscar texto, documento, carpeta o ID"
+                        class="md:col-span-2 rounded-md border-gray-300 text-sm"
+                    />
+                    <select name="visible" class="rounded-md border-gray-300 text-sm">
+                        <option value="">Visible: todos</option>
+                        <option value="1" @selected(request('visible') === '1')>Visible: SI</option>
+                        <option value="0" @selected(request('visible') === '0')>Visible: NO</option>
+                    </select>
+                    <select name="requiere_check" class="rounded-md border-gray-300 text-sm">
+                        <option value="">Requisito: todos</option>
+                        <option value="SI" @selected(strtoupper((string) request('requiere_check')) === 'SI')>Requisito: SI</option>
+                        <option value="NO" @selected(strtoupper((string) request('requiere_check')) === 'NO')>Requisito: NO</option>
+                    </select>
+                    <div class="flex items-center gap-2">
+                        <select name="per_page" class="rounded-md border-gray-300 text-sm">
+                            @foreach ([10, 25, 50] as $size)
+                                <option value="{{ $size }}" @selected((int) request('per_page', 10) === $size)>{{ $size }}/pag</option>
+                            @endforeach
+                        </select>
+                        <button class="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">Aplicar</button>
+                        <a href="{{ route('requirements.crud.index') }}" class="rounded-md border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50">Limpiar</a>
+                    </div>
+                </form>
+
                 <div class="overflow-x-auto">
                     <table id="requirements-table" class="min-w-full text-sm">
                         <thead>
                             <tr class="text-xs text-gray-500 uppercase border-b">
-                                <th class="text-left py-2 px-3">ID</th>
+                                @php
+                                    $currentSort = request('sort', 'id');
+                                    $currentDirection = request('direction', 'asc');
+                                    $sortLink = function (string $field) use ($currentSort, $currentDirection) {
+                                        $nextDir = ($currentSort === $field && $currentDirection === 'asc') ? 'desc' : 'asc';
+                                        return route('requirements.crud.index', array_merge(request()->query(), ['sort' => $field, 'direction' => $nextDir]));
+                                    };
+                                @endphp
+                                <th class="text-left py-2 px-3"><a href="{{ $sortLink('source_id') }}" class="hover:text-gray-700">ID</a></th>
                                 <th class="text-left py-2 px-3">Texto</th>
-                                <th class="text-left py-2 px-3">Documento</th>
-                                <th class="text-left py-2 px-3">Carpeta</th>
-                                <th class="text-left py-2 px-3">Visible</th>
-                                <th class="text-left py-2 px-3">Requisito</th>
+                                <th class="text-left py-2 px-3"><a href="{{ $sortLink('nombre_documento') }}" class="hover:text-gray-700">Documento</a></th>
+                                <th class="text-left py-2 px-3"><a href="{{ $sortLink('carpeta') }}" class="hover:text-gray-700">Carpeta</a></th>
+                                <th class="text-left py-2 px-3"><a href="{{ $sortLink('visible') }}" class="hover:text-gray-700">Visible</a></th>
+                                <th class="text-left py-2 px-3"><a href="{{ $sortLink('requiere_check') }}" class="hover:text-gray-700">Requisito</a></th>
                                 <th class="text-right py-2 px-3">Acciones</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y">
-                            @foreach ($requirements as $req)
+                            @forelse ($requirements as $req)
                                 <tr>
                                     <td class="py-2 px-3 text-gray-500">{{ $req->source_id }}</td>
                                     <td class="py-2 px-3 text-gray-700">{{ $req->texto ?: $req->requisito }}</td>
@@ -77,37 +114,18 @@
                                         </form>
                                     </td>
                                 </tr>
-                            @endforeach
+                            @empty
+                                <tr>
+                                    <td colspan="7" class="py-6 px-3 text-center text-sm text-gray-500">No se encontraron requisitos con esos filtros.</td>
+                                </tr>
+                            @endforelse
                         </tbody>
                     </table>
+                </div>
+                <div class="mt-4">
+                    {{ $requirements->links() }}
                 </div>
             </div>
         </div>
     </div>
-
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const table = document.getElementById('requirements-table');
-            if (table && window.jQuery) {
-                jQuery('#requirements-table').DataTable({
-                    pageLength: 10,
-                    order: [[0, 'asc']],
-                    language: {
-                        search: "Buscar:",
-                        lengthMenu: "Mostrar _MENU_",
-                        info: "Mostrando _START_ a _END_ de _TOTAL_",
-                        infoEmpty: "Sin registros",
-                        zeroRecords: "Sin resultados",
-                        paginate: {
-                            previous: "Anterior",
-                            next: "Siguiente"
-                        }
-                    }
-                });
-            }
-        });
-    </script>
 </x-app-layout>

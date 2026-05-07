@@ -60,4 +60,29 @@ class User extends Authenticatable
     protected $appends = [
         'profile_photo_url',
     ];
+
+    public function roles()
+    {
+        return $this->belongsToMany(Role::class);
+    }
+
+    public function hasRole(string $slug): bool
+    {
+        if ($this->relationLoaded('roles')) {
+            return $this->roles->contains(fn ($role) => $role->slug === $slug);
+        }
+
+        return $this->roles()->where('slug', $slug)->exists();
+    }
+
+    public function hasPermission(string $slug): bool
+    {
+        if ($this->is_admin || $this->hasRole('admin')) {
+            return true;
+        }
+
+        return $this->roles()
+            ->whereHas('permissions', fn ($query) => $query->where('slug', $slug))
+            ->exists();
+    }
 }

@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\DriveOAuthSetting;
 use App\Models\Project;
 use App\Models\Requirement;
 use App\Models\RequirementEvidence;
 use Google\Client;
+use Google\Http\MediaFileUpload;
 use Google\Service\Drive;
 use Google\Service\Drive\DriveFile;
 use Illuminate\Http\UploadedFile;
@@ -16,11 +18,15 @@ use Illuminate\Support\Str;
 
 class GoogleDriveService
 {
+    private const OAUTH_CACHE_KEY = 'drive_oauth_credentials_active';
+
     public function isConfigured(): bool
     {
-        return (bool) config('services.google.client_id')
-            && (bool) config('services.google.client_secret')
-            && (bool) config('services.google.redirect');
+        $oauth = $this->oauthCredentials();
+
+        return (bool) ($oauth['client_id'] ?? null)
+            && (bool) ($oauth['client_secret'] ?? null)
+            && (bool) ($oauth['redirect'] ?? null);
     }
 
     public function isAuthorized(?int $userId = null): bool
@@ -125,7 +131,9 @@ class GoogleDriveService
             ];
         }
 
-        RequirementEvidence::where('project_id', $project->id)->update(['in_drive' => false]);
+        RequirementEvidence::where('project_id', $project->id)
+            ->whereNotNull('drive_file_id')
+            ->update(['in_drive' => false]);
 
         $matched = [];
         $unmatched = [];
@@ -142,10 +150,41 @@ class GoogleDriveService
             $folderId = $file['rootFolderId'] ?? null;
             $folderMap = $requirementMapByFolderId->get($folderId, collect());
             $matchedRequirement = $this->matchRequirement($normalizedFile, $folderMap);
+            $existing = RequirementEvidence::query()
+                ->where('project_id', $project->id)
+                ->where('drive_file_id', $file['id'] ?? null)
+                ->first();
             if (!$matchedRequirement) {
+                if ($existing) {
+                    $existing->forceFill([
+                        'drive_file_name' => $fileName,
+                        'drive_mime_type' => $file['mimeType'] ?? null,
+                        'drive_modified_time' => $file['modifiedTime'] ?? null,
+                        'in_drive' => true,
+                    ])->save();
+                }
                 $unmatched[] = [
                     'name' => $fileName,
                     'normalized' => $normalizedFile,
+                    'folder' => $folderName,
+                ];
+                continue;
+            }
+
+            if ($existing && $existing->source === 'manual_link' && (int) $existing->requirement_id !== (int) $matchedRequirement->id) {
+                $existingReq = Requirement::query()->find($existing->requirement_id);
+                $existing->forceFill([
+                    'drive_file_name' => $fileName,
+                    'drive_mime_type' => $file['mimeType'] ?? null,
+                    'drive_modified_time' => $file['modifiedTime'] ?? null,
+                    'drive_folder_name' => $existingReq?->carpeta ?? $existing->drive_folder_name,
+                    'in_drive' => $existingReq ? $this->isValidEvidence($fileName, $file['mimeType'] ?? null, $existingReq) : true,
+                ])->save();
+
+                $matched[] = [
+                    'file' => $fileName,
+                    'normalized' => $normalizedFile,
+                    'requirement' => $existingReq?->nombre_documento ?? $existingReq?->requisito ?? ('ID ' . $existing->requirement_id),
                     'folder' => $folderName,
                 ];
                 continue;
@@ -162,7 +201,7 @@ class GoogleDriveService
                     'drive_mime_type' => $file['mimeType'] ?? null,
                     'drive_modified_time' => $file['modifiedTime'] ?? null,
                     'drive_folder_name' => $matchedRequirement->carpeta,
-                    'source' => 'drive',
+                    'source' => 'auto_match',
                     'in_drive' => $this->isValidEvidence($fileName, $file['mimeType'] ?? null, $matchedRequirement),
                 ]
             );
@@ -174,16 +213,6 @@ class GoogleDriveService
                 'folder' => $folderName,
             ];
         }
-
-        RequirementEvidence::where('project_id', $project->id)
-            ->whereNotNull('drive_file_id')
-            ->when(!empty($currentFileIds), function ($query) use ($currentFileIds) {
-                $query->whereNotIn('drive_file_id', $currentFileIds);
-            })
-            ->when(empty($currentFileIds), function ($query) {
-                $query->whereRaw('1 = 1');
-            })
-            ->delete();
 
         return [
             'total' => $filesByFolder->count(),
@@ -226,19 +255,250 @@ class GoogleDriveService
         ]);
     }
 
+    public function ensureProjectSubfolder(Project $project, string $folderName, ?int $userId = null): ?string
+    {
+        if (!$project->drive_folder_id) {
+            return null;
+        }
+
+        $existing = $this->findDirectChildFolderIdByName($project->drive_folder_id, $folderName, $userId);
+        if ($existing) {
+            return $existing;
+        }
+
+        return $this->createChildFolder($project->drive_folder_id, $folderName, $userId);
+    }
+
+    public function listFolderFiles(string $folderId, ?int $userId = null): Collection
+    {
+        return $this->listFilesInFolder($folderId, $userId);
+    }
+
+    public function listRequirementFiles(
+        Project $project,
+        Requirement $requirement,
+        ?int $userId = null,
+        ?string $query = null,
+        ?string $extension = null
+    ): array {
+        $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, false);
+        $folderId = $resolved['id'] ?? null;
+        if (!$folderId) {
+            return [
+                'folder_label' => $resolved['label'] ?? ($requirement->carpeta ?: 'Sin carpeta'),
+                'items' => collect(),
+                'total' => 0,
+            ];
+        }
+
+        $items = $this->listFilesRecursively($folderId, $userId);
+        if ($query !== null && trim($query) !== '') {
+            $needle = Str::lower(Str::ascii(trim($query)));
+            $items = $items->filter(function (array $file) use ($needle) {
+                $name = Str::lower(Str::ascii((string) ($file['name'] ?? '')));
+                return str_contains($name, $needle);
+            })->values();
+        }
+
+        if ($extension !== null && trim($extension) !== '') {
+            $ext = Str::lower(ltrim(trim($extension), '.'));
+            $items = $items->filter(function (array $file) use ($ext) {
+                $name = Str::lower((string) ($file['name'] ?? ''));
+                return Str::endsWith($name, '.' . $ext);
+            })->values();
+        }
+
+        return [
+            'folder_label' => $resolved['label'] ?? ($requirement->carpeta ?: 'Sin carpeta'),
+            'items' => $items->values(),
+            'total' => $items->count(),
+        ];
+    }
+
+    public function getDriveFileMeta(string $fileId, ?int $userId = null): array
+    {
+        $drive = $this->drive($userId);
+        $file = $drive->files->get($fileId, [
+            'fields' => 'id,name,mimeType,modifiedTime,parents,size',
+        ]);
+
+        return [
+            'id' => $file->id ?? $fileId,
+            'name' => $file->name ?? $fileId,
+            'mimeType' => $file->mimeType ?? null,
+            'modifiedTime' => $file->modifiedTime ?? null,
+            'parents' => $file->parents ?? [],
+            'size' => $file->size ?? null,
+        ];
+    }
+
+    public function linkRequirementToDriveFile(
+        Project $project,
+        Requirement $requirement,
+        array $fileMeta,
+        ?int $userId = null,
+        ?string $note = null
+    ): RequirementEvidence {
+        return RequirementEvidence::updateOrCreate(
+            [
+                'project_id' => $project->id,
+                'drive_file_id' => (string) ($fileMeta['id'] ?? ''),
+            ],
+            [
+                'requirement_id' => $requirement->id,
+                'drive_file_name' => (string) ($fileMeta['name'] ?? 'archivo'),
+                'drive_mime_type' => $fileMeta['mimeType'] ?? null,
+                'drive_modified_time' => $fileMeta['modifiedTime'] ?? null,
+                'drive_folder_name' => $requirement->carpeta,
+                'source' => 'manual_link',
+                'linked_by_user_id' => $userId,
+                'linked_at' => now(),
+                'link_note' => $note,
+                'in_drive' => $this->isValidEvidence((string) ($fileMeta['name'] ?? ''), $fileMeta['mimeType'] ?? null, $requirement),
+            ]
+        );
+    }
+
+    public function downloadFile(string $fileId, string $destinationPath, ?int $userId = null): void
+    {
+        $retries = max(1, (int) config('services.google.download_retries', 4));
+        $attempt = 0;
+        $lastException = null;
+
+        while ($attempt < $retries) {
+            $attempt++;
+            try {
+                $drive = $this->drive($userId);
+                $response = $drive->files->get($fileId, ['alt' => 'media']);
+                file_put_contents($destinationPath, $response->getBody()->getContents());
+                return;
+            } catch (\Throwable $e) {
+                $lastException = $e;
+                if ($attempt >= $retries || !$this->isRetryableDriveError($e)) {
+                    break;
+                }
+                sleep(min(6, $attempt * 2));
+            }
+        }
+
+        throw $lastException ?: new \RuntimeException('No se pudo descargar archivo desde Drive.');
+    }
+
+    public function uploadRawToFolder(string $folderId, string $fileName, string $content, string $mimeType = 'application/octet-stream', ?int $userId = null): array
+    {
+        $drive = $this->drive($userId);
+        $driveFile = new DriveFile([
+            'name' => $fileName,
+            'parents' => [$folderId],
+        ]);
+
+        $created = $drive->files->create($driveFile, [
+            'data' => $content,
+            'mimeType' => $mimeType,
+            'uploadType' => 'multipart',
+            'fields' => 'id,name,mimeType,modifiedTime',
+        ]);
+
+        return [
+            'id' => $created->id ?? null,
+            'name' => $created->name ?? $fileName,
+            'mimeType' => $created->mimeType ?? $mimeType,
+            'modifiedTime' => $created->modifiedTime ?? null,
+        ];
+    }
+
+    public function uploadLocalFileToFolder(
+        string $folderId,
+        string $fileName,
+        string $localPath,
+        string $mimeType = 'application/octet-stream',
+        ?int $userId = null,
+        ?callable $onProgress = null
+    ): array
+    {
+        if (!is_file($localPath)) {
+            throw new \RuntimeException('No existe el archivo local para subir: ' . $localPath);
+        }
+
+        $size = filesize($localPath);
+        if ($size === false || $size < 0) {
+            throw new \RuntimeException('No se pudo leer el tamano del archivo local: ' . $localPath);
+        }
+
+        $client = $this->client($userId);
+        $drive = new Drive($client);
+        $client->setDefer(true);
+
+        try {
+            $driveFile = new DriveFile([
+                'name' => $fileName,
+                'parents' => [$folderId],
+            ]);
+
+            $request = $drive->files->create($driveFile, [
+                'uploadType' => 'resumable',
+                'fields' => 'id,name,mimeType,modifiedTime',
+            ]);
+
+            $chunkSize = 8 * 1024 * 1024;
+            $media = new MediaFileUpload($client, $request, $mimeType, '', true, $chunkSize);
+            $media->setFileSize($size);
+
+            $status = false;
+            $handle = fopen($localPath, 'rb');
+            if ($handle === false) {
+                throw new \RuntimeException('No se pudo abrir archivo local para subir: ' . $localPath);
+            }
+
+            try {
+                while (!$status && !feof($handle)) {
+                    $chunk = fread($handle, $chunkSize);
+                    if ($chunk === false) {
+                        throw new \RuntimeException('Error leyendo bloque del archivo local: ' . $localPath);
+                    }
+                    $status = $media->nextChunk($chunk);
+                    if ($onProgress) {
+                        $uploadedBytes = (int) $media->getProgress();
+                        $onProgress($uploadedBytes, (int) $size);
+                    }
+                }
+            } finally {
+                fclose($handle);
+            }
+
+            if (!$status) {
+                throw new \RuntimeException('La subida resumible no finalizo correctamente.');
+            }
+
+            return [
+                'id' => $status->id ?? null,
+                'name' => $status->name ?? $fileName,
+                'mimeType' => $status->mimeType ?? $mimeType,
+                'modifiedTime' => $status->modifiedTime ?? null,
+            ];
+        } finally {
+            $client->setDefer(false);
+        }
+    }
+
     private function client(?int $userId = null): Client
     {
+        $oauth = $this->oauthCredentials();
+
         $client = new Client();
         $client->setApplicationName('gestion-proyectos');
-        $client->setClientId(config('services.google.client_id'));
-        $client->setClientSecret(config('services.google.client_secret'));
-        $client->setRedirectUri(config('services.google.redirect'));
+        $client->setClientId($oauth['client_id'] ?? null);
+        $client->setClientSecret($oauth['client_secret'] ?? null);
+        $client->setRedirectUri($oauth['redirect'] ?? null);
         $client->setAccessType('offline');
         $client->setPrompt('consent');
         $client->setScopes([Drive::DRIVE]);
+        $timeout = max(30, (int) config('services.google.timeout', 120));
+        $connectTimeout = max(5, (int) config('services.google.connect_timeout', 20));
         $client->setHttpClient(new \GuzzleHttp\Client([
-            'timeout' => 10,
-            'connect_timeout' => 5,
+            'timeout' => $timeout,
+            'connect_timeout' => $connectTimeout,
+            'read_timeout' => $timeout,
         ]));
 
         $token = $this->loadToken($userId);
@@ -264,6 +524,37 @@ class GoogleDriveService
     private function drive(?int $userId = null): Drive
     {
         return new Drive($this->client($userId));
+    }
+
+    public function forgetCredentialCache(): void
+    {
+        Cache::forget(self::OAUTH_CACHE_KEY);
+    }
+
+    public function oauthCredentials(): array
+    {
+        return Cache::remember(self::OAUTH_CACHE_KEY, now()->addMinutes(10), function (): array {
+            $fallback = [
+                'client_id' => config('services.google.client_id'),
+                'client_secret' => config('services.google.client_secret'),
+                'redirect' => config('services.google.redirect'),
+            ];
+
+            try {
+                $setting = DriveOAuthSetting::query()->latest('id')->first();
+                if (!$setting) {
+                    return $fallback;
+                }
+
+                return [
+                    'client_id' => $setting->client_id ?: $fallback['client_id'],
+                    'client_secret' => $setting->client_secret ?: $fallback['client_secret'],
+                    'redirect' => $setting->redirect_uri ?: $fallback['redirect'],
+                ];
+            } catch (\Throwable $e) {
+                return $fallback;
+            }
+        });
     }
 
     private function tokenPath(?int $userId = null): string
@@ -326,6 +617,47 @@ class GoogleDriveService
         } while ($pageToken);
 
         return $files;
+    }
+
+    private function listFilesRecursively(string $folderId, ?int $userId = null): Collection
+    {
+        $drive = $this->drive($userId);
+        $queue = collect([$folderId]);
+        $seenFolders = [];
+        $files = collect();
+
+        while ($queue->isNotEmpty()) {
+            $current = (string) $queue->shift();
+            if (isset($seenFolders[$current])) {
+                continue;
+            }
+            $seenFolders[$current] = true;
+
+            $directFiles = $this->listFilesInFolder($current, $userId);
+            $files = $files->merge($directFiles);
+
+            $pageToken = null;
+            do {
+                $response = $drive->files->listFiles([
+                    'q' => sprintf("'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'", $current),
+                    'fields' => 'nextPageToken, files(id,name)',
+                    'pageToken' => $pageToken,
+                    'pageSize' => 200,
+                ]);
+
+                foreach ($response->files as $folder) {
+                    if (!isset($seenFolders[(string) $folder->id])) {
+                        $queue->push((string) $folder->id);
+                    }
+                }
+
+                $pageToken = $response->nextPageToken;
+            } while ($pageToken);
+        }
+
+        return $files
+            ->unique('id')
+            ->values();
     }
 
     private function findFolderIdByName(string $rootFolderId, string $targetName, ?int $userId = null): ?string
@@ -654,6 +986,19 @@ class GoogleDriveService
         return null;
     }
 
+    private function isRetryableDriveError(\Throwable $e): bool
+    {
+        $message = Str::lower($e->getMessage());
+
+        return str_contains($message, 'curl error 28')
+            || str_contains($message, 'operation timed out')
+            || str_contains($message, 'temporarily unavailable')
+            || str_contains($message, 'connection reset')
+            || str_contains($message, 'failed to connect')
+            || str_contains($message, '429')
+            || str_contains($message, '503');
+    }
+
     private function isPdfFile(string $name, ?string $mimeType): bool
     {
         if ($mimeType === 'application/pdf') {
@@ -673,8 +1018,11 @@ class GoogleDriveService
                 return true;
             }
             if (in_array($mimeType, [
+                'application/vnd.google-apps.spreadsheet',
                 'application/vnd.ms-excel',
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'text/csv',
+                'application/csv',
             ], true)) {
                 return true;
             }
@@ -698,6 +1046,7 @@ class GoogleDriveService
                 return true;
             }
             if (in_array($mimeType, [
+                'application/vnd.google-apps.presentation',
                 'application/vnd.ms-powerpoint',
                 'application/powerpoint',
                 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
