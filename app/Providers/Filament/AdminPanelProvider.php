@@ -2,7 +2,7 @@
 
 namespace App\Providers\Filament;
 
-use App\Http\Middleware\EnsureAdminAccess;
+use App\Http\Middleware\EnsurePanelAccess;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -29,7 +29,19 @@ class AdminPanelProvider extends PanelProvider
             ->path('panel')
             ->login()
             ->colors([
-                'primary' => Color::Amber,
+                'primary' => [
+                    50 => '#f8ffe8',
+                    100 => '#eefecb',
+                    200 => '#ddfb98',
+                    300 => '#caf561',
+                    400 => '#b3e82e',
+                    500 => '#8fd400',
+                    600 => '#72ad00',
+                    700 => '#578407',
+                    800 => '#47680b',
+                    900 => '#3d570f',
+                    950 => '#1f3003',
+                ],
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
@@ -54,7 +66,7 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
-                EnsureAdminAccess::class,
+                EnsurePanelAccess::class,
             ]);
     }
 }

@@ -8,7 +8,10 @@ use App\Models\RequirementEvidence;
 use App\Models\AttachmentPackageRun;
 use App\Services\GoogleDriveService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Symfony\Component\Process\Process;
+use Carbon\Carbon;
 
 class ProjectManageController extends Controller
 {
@@ -27,15 +30,7 @@ class ProjectManageController extends Controller
         $this->expireStaleAttachmentRuns($project->id);
 
         $project->load(['requisitos', 'sectores']);
-        $requirements = $project->requisitos()
-            ->where('requirements.visible', true)
-            ->orderBy('carpeta')
-            ->orderBy('orden')
-            ->orderBy('codigo_interno')
-            ->orderBy('nombre_documento')
-            ->get();
-
-        $requirements = $this->filterSectorial($requirements, $project);
+        $requirements = $this->getActiveRequirementsForProject($project);
 
         $renumerated = $this->buildRenumerationMap($requirements);
 
@@ -51,12 +46,12 @@ class ProjectManageController extends Controller
             } catch (\Throwable $e) {
                 return redirect()
                     ->route($routeName, $project)
-                    ->withErrors(['archivo' => $e->getMessage() ?: 'Error al sincronizar con Drive.']);
+                    ->with('error', $e->getMessage() ?: 'Error al sincronizar con Drive.');
             }
             if (!empty($syncReport['error'])) {
                 return redirect()
                     ->route($routeName, $project)
-                    ->withErrors(['archivo' => $syncReport['error']]);
+                    ->with('error', $syncReport['error']);
             }
             if (!$request->boolean('debug')) {
                 $syncReport = null;
@@ -122,23 +117,28 @@ class ProjectManageController extends Controller
 
     public function upload(Request $request, Project $project, Requirement $requirement, GoogleDriveService $drive)
     {
+        $this->authorizeProjectMutation();
+
         @ini_set('max_execution_time', '0');
         set_time_limit(0);
+
+        $expectsJson = $request->expectsJson();
+        $userId = auth()->id();
         $project->load('requisitos');
 
         if (!$project->requisitos->contains($requirement->id)) {
-            return back()->withErrors(['archivo' => 'Este requisito no está marcado para el proyecto.']);
+            return $this->uploadErrorResponse($expectsJson, 422, 'requirement_not_applicable', 'Este requisito no está marcado para el proyecto.');
         }
 
         if (!$project->drive_folder_id) {
-            return back()->withErrors(['archivo' => 'El proyecto no tiene carpeta de Drive configurada.']);
+            return $this->uploadErrorResponse($expectsJson, 422, 'missing_drive_folder', 'El proyecto no tiene carpeta de Drive configurada.');
         }
 
-        if (!$drive->isAuthorized(auth()->id())) {
-            return back()->withErrors(['archivo' => 'Conecta Drive antes de cargar evidencias.']);
+        if (!$drive->isAuthorized($userId)) {
+            return $this->uploadErrorResponse($expectsJson, 422, 'drive_not_authorized', 'Conecta Drive antes de cargar evidencias.');
         }
 
-        $data = $request->validate([
+        $validator = Validator::make($request->all(), [
             'archivos' => ['required', 'array', 'min:1'],
             'archivos.*' => ['file', 'max:51200'],
         ], [
@@ -146,10 +146,25 @@ class ProjectManageController extends Controller
             'archivos.*.max' => 'Cada archivo debe pesar máximo 50MB.',
         ]);
 
-        $renumerated = $this->buildRenumerationMap($project->requisitos()->get());
+        if ($validator->fails()) {
+            $message = $validator->errors()->first() ?: 'Archivo inválido.';
+            if ($expectsJson) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => $message,
+                    'code' => 'validation_failed',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+            return back()->withErrors($validator)->withInput();
+        }
+
+        $data = $validator->validated();
+        $renumerated = $this->buildRenumerationMap($this->getActiveRequirementsForProject($project));
         $prefix = $renumerated[$requirement->id] ?? $requirement->codigo_interno ?? $requirement->numeracion ?? '';
         $baseName = $requirement->nombre_documento ?: $requirement->requisito;
 
+        $uploadedCount = 0;
         $index = 1;
         $totalFiles = count($data['archivos']);
         foreach ($data['archivos'] as $archivo) {
@@ -157,76 +172,216 @@ class ProjectManageController extends Controller
             $extension = $archivo->getClientOriginalExtension();
             $targetBase = trim($prefix . ' ' . $baseName) . $suffix;
             $targetName = $extension ? $targetBase . '.' . $extension : $targetBase;
+
+            Log::info('manage_upload_attempt', [
+                'project_id' => $project->id,
+                'requirement_id' => $requirement->id,
+                'user_id' => $userId,
+                'filename' => $archivo->getClientOriginalName(),
+                'target_name' => $targetName,
+                'stage' => 'upload_to_drive',
+            ]);
+
             try {
-                $drive->uploadEvidence($project, $requirement, $archivo, $targetName, auth()->id());
+                $drive->uploadEvidence($project, $requirement, $archivo, $targetName, $userId);
+                $uploadedCount++;
             } catch (\Throwable $e) {
-                return back()
-                    ->withErrors(['archivo' => $e->getMessage() ?: 'Error al subir a Drive.']);
+                Log::error('manage_upload_failed', [
+                    'project_id' => $project->id,
+                    'requirement_id' => $requirement->id,
+                    'user_id' => $userId,
+                    'filename' => $archivo->getClientOriginalName(),
+                    'target_name' => $targetName,
+                    'stage' => 'upload_to_drive',
+                    'error' => $e->getMessage(),
+                ]);
+
+                return $this->uploadErrorResponse(
+                    $expectsJson,
+                    500,
+                    'drive_upload_failed',
+                    $e->getMessage() ?: 'Error al subir a Drive.'
+                );
             }
             $index++;
+        }
+
+        $requirementEvidences = RequirementEvidence::query()
+            ->where('project_id', $project->id)
+            ->where('requirement_id', $requirement->id)
+            ->where('drive_folder_name', $requirement->carpeta)
+            ->orderByDesc('id')
+            ->get();
+
+        $payload = [
+            'id' => $requirement->id,
+            'has_evidence' => $requirementEvidences->where('in_drive', true)->isNotEmpty(),
+            'valid_evidence_count' => $requirementEvidences->where('in_drive', true)->count(),
+            'evidences' => $requirementEvidences->map(function (RequirementEvidence $evidence) {
+                return [
+                    'id' => $evidence->id,
+                    'name' => $evidence->drive_file_name,
+                    'file_id' => $evidence->drive_file_id,
+                    'source' => $evidence->source,
+                    'is_valid' => (bool) $evidence->in_drive,
+                ];
+            })->values()->all(),
+        ];
+
+        if ($expectsJson) {
+            return response()->json([
+                'ok' => true,
+                'message' => 'Evidencias cargadas en Drive.',
+                'uploaded_count' => $uploadedCount,
+                'requirement' => $payload,
+            ]);
         }
 
         return back()->with('status', 'Evidencias cargadas en Drive.');
     }
 
+    private function uploadErrorResponse(bool $expectsJson, int $status, string $code, string $message)
+    {
+        if ($expectsJson) {
+            return response()->json([
+                'ok' => false,
+                'message' => $message,
+                'code' => $code,
+            ], $status);
+        }
+
+        return back()->with('error', $message);
+    }
+
+    public function renumberUploads(Request $request, Project $project, GoogleDriveService $drive)
+    {
+        $this->authorizeProjectMutation();
+
+        $userId = auth()->id();
+        if (!$project->drive_folder_id) {
+            return back()->with('error', 'El proyecto no tiene carpeta de Drive configurada.');
+        }
+        if (!$drive->isAuthorized($userId)) {
+            return back()->with('error', 'Conecta Drive antes de renumerar.');
+        }
+
+        $requirements = $this->getActiveRequirementsForProject($project);
+        $renumerated = $this->buildRenumerationMap($requirements);
+
+        $renamed = 0;
+        $skipped = 0;
+        $failed = 0;
+
+        foreach ($requirements as $requirement) {
+            $prefix = $renumerated[$requirement->id] ?? null;
+            if (!$prefix) {
+                continue;
+            }
+
+            $baseName = trim((string) ($requirement->nombre_documento ?: $requirement->requisito));
+            $evidences = RequirementEvidence::query()
+                ->where('project_id', $project->id)
+                ->where('requirement_id', $requirement->id)
+                ->whereNotNull('drive_file_id')
+                ->where('in_drive', true)
+                ->orderBy('id')
+                ->get();
+
+            $total = $evidences->count();
+            $index = 1;
+            foreach ($evidences as $evidence) {
+                $currentName = (string) ($evidence->drive_file_name ?? '');
+                $extension = pathinfo($currentName, PATHINFO_EXTENSION);
+                $suffix = $total > 1 ? " ({$index})" : '';
+                $targetBase = trim($prefix . ' ' . $baseName) . $suffix;
+                $targetName = $extension !== '' ? $targetBase . '.' . $extension : $targetBase;
+
+                if ($targetName === $currentName) {
+                    $skipped++;
+                    $index++;
+                    continue;
+                }
+
+                try {
+                    $updated = $drive->renameFile((string) $evidence->drive_file_id, $targetName, $userId);
+                    $newName = $updated['name'] ?? $targetName;
+                    $newMime = $updated['mimeType'] ?? $evidence->drive_mime_type;
+                    $newModified = $updated['modifiedTime'] ?? $evidence->drive_modified_time;
+                    if (is_string($newModified) && str_contains($newModified, 'T')) {
+                        try {
+                            $newModified = Carbon::parse($newModified)->format('Y-m-d H:i:s');
+                        } catch (\Throwable $parseError) {
+                            $newModified = $evidence->drive_modified_time;
+                        }
+                    }
+
+                    // Keep DB consistent when the same Drive file_id is linked in multiple records/projects.
+                    RequirementEvidence::query()
+                        ->where('drive_file_id', (string) $evidence->drive_file_id)
+                        ->update([
+                            'drive_file_name' => $newName,
+                            'drive_mime_type' => $newMime,
+                            'drive_modified_time' => $newModified,
+                        ]);
+                    $renamed++;
+                } catch (\Throwable $e) {
+                    $failed++;
+                    Log::error('renumber_upload_failed', [
+                        'project_id' => $project->id,
+                        'requirement_id' => $requirement->id,
+                        'evidence_id' => $evidence->id,
+                        'from' => $currentName,
+                        'to' => $targetName,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
+                $index++;
+            }
+        }
+
+        return back()->with('status', "Renumeración completada. Renombrados: {$renamed}, sin cambio: {$skipped}, fallidos: {$failed}.");
+    }
+
     private function buildRenumerationMap($requirements): array
     {
         $map = [];
-        $grouped = $requirements->groupBy(function ($req) {
-            return $req->carpeta ?? 'Sin carpeta';
-        });
+        // Important: use the incoming collection order so numbering matches the same
+        // order rendered in checklist/manage (no extra local re-sort here).
+        $ordered = collect($requirements)->values();
 
-        foreach ($grouped as $carpeta => $items) {
-            $sorted = $items->sortBy(function ($req) {
-                return $this->numeracionSortKey($req->codigo_interno ?? $req->numeracion);
-            })->values();
-
-            $major = null;
-            $width = 2;
-            if ($sorted->isNotEmpty()) {
-                $first = (string) ($sorted->first()->codigo_interno ?? $sorted->first()->numeracion ?? '');
-                if (str_contains($first, '.')) {
-                    [$major, $minor] = explode('.', $first, 2);
-                    $width = max(2, strlen($minor));
-                } elseif ($first !== '') {
-                    $width = max(2, strlen($first));
-                }
+        $counters = [];
+        foreach ($ordered as $req) {
+            $groupCode = $this->detectTopGroupCode((string) ($req->carpeta ?? '')) ?? '99';
+            $major = ltrim($groupCode, '0');
+            if ($major === '') {
+                $major = $groupCode;
             }
-
-            $counter = 1;
-            foreach ($sorted as $req) {
-                $formatted = $major !== null
-                    ? sprintf('%s.%0' . $width . 'd', $major, $counter)
-                    : sprintf('%0' . $width . 'd', $counter);
-                $map[$req->id] = $formatted;
-                $counter++;
-            }
+            $folderKey = mb_strtolower(trim((string) ($req->carpeta ?? 'sin-carpeta')));
+            $counterKey = $groupCode . '|' . $folderKey;
+            $counters[$counterKey] = ($counters[$counterKey] ?? 0) + 1;
+            $map[$req->id] = sprintf('%s.%02d', $major, $counters[$counterKey]);
         }
 
         return $map;
     }
 
-    private function numeracionSortKey(?string $value): string
+    private function getActiveRequirementsForProject(Project $project)
     {
-        if (!$value) {
-            return '999999';
-        }
+        $requirements = $project->requisitos()
+            ->where('requirements.visible', true)
+            ->orderBy('carpeta')
+            ->orderBy('orden')
+            ->orderBy('codigo_interno')
+            ->orderBy('nombre_documento')
+            ->get();
 
-        $parts = explode('.', $value);
-        $parts = array_map(function ($part) {
-            return str_pad($part, 4, '0', STR_PAD_LEFT);
-        }, $parts);
-
-        return implode('.', $parts);
+        return $this->filterSectorial($requirements, $project);
     }
 
     private function filterSectorial($requirements, Project $project)
     {
-        $sectorNames = $project->sectores
-            ->pluck('nombre')
-            ->map(fn ($name) => $this->normalizeSector($name))
-            ->filter()
-            ->all();
+        $sectorNames = $this->projectSectorCatalog($project)['names'];
 
         if (empty($sectorNames)) {
             return $requirements;
@@ -239,10 +394,77 @@ class ProjectManageController extends Controller
                 if ($reqSector === '') {
                     return true;
                 }
-                return in_array($reqSector, $sectorNames, true);
+                return $this->sectorMatches($reqSector, $sectorNames);
             }
             return true;
         })->values();
+    }
+
+    private function sectorMatches(string $reqSector, array $projectSectors): bool
+    {
+        foreach ($projectSectors as $projectSector) {
+            if ($reqSector === $projectSector) {
+                return true;
+            }
+
+            $reqTokens = collect(explode(' ', str_replace(' y ', ' ', $reqSector)))
+                ->filter(fn ($t) => $t !== '')
+                ->values()
+                ->all();
+            $projTokens = collect(explode(' ', str_replace(' y ', ' ', $projectSector)))
+                ->filter(fn ($t) => $t !== '')
+                ->values()
+                ->all();
+
+            if (!empty($reqTokens) && !empty($projTokens)) {
+                sort($reqTokens);
+                sort($projTokens);
+                if ($reqTokens === $projTokens) {
+                    return true;
+                }
+            }
+
+            if (str_contains($reqSector, $projectSector) || str_contains($projectSector, $reqSector)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function projectSectorCatalog(Project $project): array
+    {
+        $primary = $project->sectores->first(fn ($sector) => (bool) ($sector->pivot->is_primary ?? false));
+        if (!$primary) {
+            $primary = $project->sectores->first();
+        }
+        $secondary = $project->sectores->filter(fn ($s) => !(bool) ($s->pivot->is_primary ?? false));
+        if ($primary) {
+            $secondary = $secondary->reject(fn ($s) => (int) $s->id === (int) $primary->id);
+        }
+
+        $ordered = collect();
+        if ($primary) {
+            $ordered->push([
+                'name' => $primary->nombre,
+                'normalized' => $this->normalizeSector($primary->nombre),
+                'is_primary' => true,
+            ]);
+        }
+        foreach ($secondary as $sector) {
+            $ordered->push([
+                'name' => $sector->nombre,
+                'normalized' => $this->normalizeSector($sector->nombre),
+                'is_primary' => false,
+            ]);
+        }
+
+        $ordered = $ordered->filter(fn ($s) => $s['normalized'] !== '')->values();
+
+        return [
+            'ordered' => $ordered->all(),
+            'names' => $ordered->pluck('normalized')->all(),
+        ];
     }
 
     private function normalizeSector(?string $value): string
@@ -403,5 +625,13 @@ class ProjectManageController extends Controller
             'python_version' => $pythonVersion,
             'python_error' => $pythonError,
         ];
+    }
+
+    private function authorizeProjectMutation(): void
+    {
+        $user = auth()->user();
+        if (!$user || !$user->canMutateProjects()) {
+            abort(403);
+        }
     }
 }

@@ -53,9 +53,19 @@ class ProjectResource extends Resource
                             ->required()
                             ->maxLength(100)
                             ->unique(ignoreRecord: true),
+                        Select::make('funding_source')
+                            ->label('Fuente de recursos')
+                            ->options([
+                                'sgr' => 'SGR',
+                                'propios' => 'Recursos propios',
+                            ])
+                            ->default('sgr')
+                            ->required()
+                            ->native(false),
                         TextInput::make('bipin')
                             ->label('BIPIN')
-                            ->maxLength(100),
+                            ->maxLength(100)
+                            ->helperText('Opcional. Si está vacío y la fuente es recursos propios, se usará ID proyecto en certificaciones.'),
                         TextInput::make('nombre_clave')
                             ->label('Nombre clave')
                             ->maxLength(255),
@@ -78,14 +88,22 @@ class ProjectResource extends Resource
                             ->options(User::query()->orderBy('name')->pluck('name', 'id')->all())
                             ->searchable()
                             ->preload(),
-                        Select::make('sectores')
-                            ->label('Sectores')
-                            ->relationship('sectores', 'nombre')
-                            ->multiple()
+                        Select::make('sector_principal_id')
+                            ->label('Sector principal')
+                            ->options(Sector::query()->orderBy('nombre')->pluck('nombre', 'id')->all())
                             ->required()
                             ->preload()
                             ->searchable()
-                            ->columnSpanFull(),
+                            ->native(false),
+                        Select::make('sectores_secundarios')
+                            ->label('Sectores secundarios')
+                            ->options(Sector::query()->orderBy('nombre')->pluck('nombre', 'id')->all())
+                            ->multiple()
+                            ->preload()
+                            ->searchable()
+                            ->native(false)
+                            ->helperText('Opcional. Se mostrarán después del principal en Documentos Sectoriales.')
+                            ->columnSpan(2),
                     ]),
                 Section::make('Contenido y Drive')
                     ->columns(2)
@@ -264,5 +282,33 @@ class ProjectResource extends Resource
             'manage' => Pages\ManageProject::route('/{record}/manage'),
             'attachments' => Pages\ManageProjectAttachments::route('/{record}/attachments-pdf'),
         ];
+    }
+
+    public static function canViewAny(): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->canAccessPanel());
+    }
+
+    public static function canCreate(): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->canMutateProjects());
+    }
+
+    public static function canEdit($record): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->canMutateProjects());
+    }
+
+    public static function canDelete($record): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->isAdminUser());
     }
 }

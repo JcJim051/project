@@ -79,6 +79,7 @@ class ProjectDriveEvidenceController extends Controller
 
     public function linkFile(Project $project, Requirement $requirement, Request $request, GoogleDriveService $drive)
     {
+        $this->authorizeProjectMutation();
         $this->ensureDriveReady($project, $drive);
         $this->ensureRequirementInProject($project, $requirement);
 
@@ -119,6 +120,7 @@ class ProjectDriveEvidenceController extends Controller
 
     public function unlinkFile(Project $project, Requirement $requirement, RequirementEvidence $evidence)
     {
+        $this->authorizeProjectMutation();
         $this->ensureRequirementInProject($project, $requirement);
 
         if ((int) $evidence->project_id !== (int) $project->id || (int) $evidence->requirement_id !== (int) $requirement->id) {
@@ -131,8 +133,42 @@ class ProjectDriveEvidenceController extends Controller
             'ok' => true,
         ]);
     }
+
+    public function deleteDriveFile(Project $project, Requirement $requirement, RequirementEvidence $evidence, GoogleDriveService $drive)
+    {
+        $this->authorizeProjectMutation();
+        $this->ensureDriveReady($project, $drive);
+        $this->ensureRequirementInProject($project, $requirement);
+
+        if ((int) $evidence->project_id !== (int) $project->id || (int) $evidence->requirement_id !== (int) $requirement->id) {
+            abort(404);
+        }
+
+        if (!$evidence->drive_file_id) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'La evidencia no tiene file_id de Drive.',
+            ], 422);
+        }
+
+        $fileId = (string) $evidence->drive_file_id;
+        $drive->deleteFile($fileId, auth()->id());
+
+        // Keep history rows but mark file as unavailable after physical deletion in Drive.
+        RequirementEvidence::query()
+            ->where('drive_file_id', $fileId)
+            ->update([
+                'in_drive' => false,
+            ]);
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Archivo eliminado de Drive.',
+        ]);
+    }
     public function linkFilesBulk(Project $project, Request $request, GoogleDriveService $drive)
     {
+        $this->authorizeProjectMutation();
         $this->ensureDriveReady($project, $drive);
 
         $data = $request->validate([
@@ -220,6 +256,14 @@ class ProjectDriveEvidenceController extends Controller
         }
         if (!$drive->isAuthorized(auth()->id())) {
             abort(422, 'Conecta Drive antes de vincular evidencias.');
+        }
+    }
+
+    private function authorizeProjectMutation(): void
+    {
+        $user = auth()->user();
+        if (!$user || !$user->canMutateProjects()) {
+            abort(403);
         }
     }
 }

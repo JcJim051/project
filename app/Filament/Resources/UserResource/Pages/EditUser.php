@@ -16,4 +16,11 @@ class EditUser extends EditRecord
             Actions\DeleteAction::make(),
         ];
     }
+
+    protected function afterSave(): void
+    {
+        $isAdminRole = $this->record->roles()->where('slug', 'admin')->exists();
+        $this->record->is_admin = $isAdminRole;
+        $this->record->save();
+    }
 }

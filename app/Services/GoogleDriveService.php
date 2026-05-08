@@ -359,6 +359,32 @@ class GoogleDriveService
         );
     }
 
+
+    public function renameFile(string $fileId, string $newName, ?int $userId = null): array
+    {
+        $drive = $this->drive($userId);
+        $fileMeta = new DriveFile([
+            'name' => $newName,
+        ]);
+
+        $updated = $drive->files->update($fileId, $fileMeta, [
+            'fields' => 'id,name,mimeType,modifiedTime',
+        ]);
+
+        return [
+            'id' => $updated->id ?? $fileId,
+            'name' => $updated->name ?? $newName,
+            'mimeType' => $updated->mimeType ?? null,
+            'modifiedTime' => $updated->modifiedTime ?? null,
+        ];
+    }
+
+    public function deleteFile(string $fileId, ?int $userId = null): void
+    {
+        $drive = $this->drive($userId);
+        $drive->files->delete($fileId);
+    }
+
     public function downloadFile(string $fileId, string $destinationPath, ?int $userId = null): void
     {
         $retries = max(1, (int) config('services.google.download_retries', 4));

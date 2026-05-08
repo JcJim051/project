@@ -90,23 +90,7 @@ class ProjectController extends Controller
 
     public function store(Request $request)
     {
-        $data = $request->validate([
-            'nombre' => ['required', 'string', 'max:255'],
-            'objeto_proyecto' => ['required', 'string', 'max:500'],
-            'id_proyecto' => ['required', 'string', 'max:100', 'unique:projects,id_proyecto'],
-            'bipin' => ['nullable', 'string', 'max:100'],
-            'nombre_clave' => ['nullable', 'string', 'max:255'],
-            'municipio' => ['required', 'string', 'max:255'],
-            'secretaria' => ['nullable', 'string', 'max:255'],
-            'ruta_drive' => ['nullable', 'string', 'max:500'],
-            'formulador_id' => ['nullable', 'exists:users,id'],
-            'estructurador_id' => ['nullable', 'exists:users,id'],
-            'fecha_creacion' => ['nullable', 'date'],
-            'sectores' => ['required', 'array', 'min:1'],
-            'sectores.*' => ['exists:sectors,id'],
-        ], [
-            'sectores.required' => 'Debes seleccionar al menos un sector.',
-        ]);
+        $data = $this->validateProject($request);
 
         if (!empty($data['ruta_drive'])) {
             $driveId = $this->extractDriveFolderId($data['ruta_drive']);
@@ -119,7 +103,7 @@ class ProjectController extends Controller
         }
 
         $project = Project::create($data);
-        $project->sectores()->sync($data['sectores']);
+        $this->syncProjectSectors($project, $data);
 
         return redirect()->route('projects.index')->with('status', 'Proyecto creado correctamente.');
     }
@@ -131,28 +115,19 @@ class ProjectController extends Controller
         $sectors = Sector::orderBy('nombre')->get();
         $users = User::orderBy('name')->get();
 
-        return view('projects.edit', compact('project', 'sectors', 'users'));
+        $principalSectorId = optional($project->sectores->first(fn ($sector) => (bool) ($sector->pivot->is_primary ?? false)))->id;
+        $secondarySectorIds = $project->sectores
+            ->reject(fn ($sector) => (bool) ($sector->pivot->is_primary ?? false))
+            ->pluck('id')
+            ->values()
+            ->all();
+
+        return view('projects.edit', compact('project', 'sectors', 'users', 'principalSectorId', 'secondarySectorIds'));
     }
 
     public function update(Request $request, Project $project)
     {
-        $data = $request->validate([
-            'nombre' => ['required', 'string', 'max:255'],
-            'objeto_proyecto' => ['required', 'string', 'max:500'],
-            'id_proyecto' => ['required', 'string', 'max:100', Rule::unique('projects', 'id_proyecto')->ignore($project->id)],
-            'bipin' => ['nullable', 'string', 'max:100'],
-            'nombre_clave' => ['nullable', 'string', 'max:255'],
-            'municipio' => ['required', 'string', 'max:255'],
-            'secretaria' => ['nullable', 'string', 'max:255'],
-            'ruta_drive' => ['nullable', 'string', 'max:500'],
-            'formulador_id' => ['nullable', 'exists:users,id'],
-            'estructurador_id' => ['nullable', 'exists:users,id'],
-            'fecha_creacion' => ['nullable', 'date'],
-            'sectores' => ['required', 'array', 'min:1'],
-            'sectores.*' => ['exists:sectors,id'],
-        ], [
-            'sectores.required' => 'Debes seleccionar al menos un sector.',
-        ]);
+        $data = $this->validateProject($request, $project);
 
         if (!empty($data['ruta_drive'])) {
             $driveId = $this->extractDriveFolderId($data['ruta_drive']);
@@ -167,9 +142,50 @@ class ProjectController extends Controller
         }
 
         $project->update($data);
-        $project->sectores()->sync($data['sectores']);
+        $this->syncProjectSectors($project, $data);
 
         return redirect()->route('projects.index')->with('status', 'Proyecto actualizado correctamente.');
+    }
+
+    private function validateProject(Request $request, ?Project $project = null): array
+    {
+        $idProyectoUnique = Rule::unique('projects', 'id_proyecto');
+        if ($project) {
+            $idProyectoUnique = $idProyectoUnique->ignore($project->id);
+        }
+
+        return $request->validate([
+            'nombre' => ['required', 'string', 'max:255'],
+            'objeto_proyecto' => ['required', 'string', 'max:500'],
+            'id_proyecto' => ['required', 'string', 'max:100', $idProyectoUnique],
+            'funding_source' => ['required', Rule::in(['sgr', 'propios'])],
+            'bipin' => ['nullable', 'string', 'max:100'],
+            'nombre_clave' => ['nullable', 'string', 'max:255'],
+            'municipio' => ['required', 'string', 'max:255'],
+            'secretaria' => ['nullable', 'string', 'max:255'],
+            'ruta_drive' => ['nullable', 'string', 'max:500'],
+            'formulador_id' => ['nullable', 'exists:users,id'],
+            'estructurador_id' => ['nullable', 'exists:users,id'],
+            'fecha_creacion' => ['nullable', 'date'],
+            'sector_principal_id' => ['required', 'exists:sectors,id'],
+            'sectores_secundarios' => ['nullable', 'array'],
+            'sectores_secundarios.*' => ['exists:sectors,id', 'different:sector_principal_id'],
+        ], [
+            'sector_principal_id.required' => 'Debes seleccionar un sector principal.',
+        ]);
+    }
+
+    private function syncProjectSectors(Project $project, array $data): void
+    {
+        $primaryId = (int) $data['sector_principal_id'];
+        $secondary = collect($data['sectores_secundarios'] ?? [])->map(fn ($id) => (int) $id);
+        $sectorIds = $secondary->push($primaryId)->unique()->values();
+        $project->sectores()->sync($sectorIds->all());
+        foreach ($sectorIds as $sectorId) {
+            $project->sectores()->updateExistingPivot($sectorId, [
+                'is_primary' => ((int) $sectorId === $primaryId),
+            ]);
+        }
     }
 
     private function extractDriveFolderId(string $input): ?string

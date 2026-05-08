@@ -34,6 +34,7 @@ class ManageProjectChecklist extends Page
                 'requirements' => $data['requirements'] ?? collect(),
                 'applied' => $data['applied'] ?? [],
                 'totalsByFolder' => $data['totalsByFolder'] ?? collect(),
+                'sectorCatalog' => $data['sectorCatalog'] ?? ['ordered' => [], 'names' => []],
             ];
         }
     }

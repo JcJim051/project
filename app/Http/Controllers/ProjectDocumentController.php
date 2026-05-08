@@ -91,8 +91,16 @@ class ProjectDocumentController extends Controller
 
         $processor = new TemplateProcessor($templatePath);
         $processor->setMacroChars('{{', '}}');
+        $fundingSource = strtolower((string) ($project->funding_source ?? 'sgr'));
+        $referenceCode = $fundingSource === 'sgr'
+            ? (string) ($project->bipin ?? '')
+            : (string) ($project->id_proyecto ?? '');
+
         $processor->setValue('OBJETO', $project->objeto_proyecto ?? '');
-        $processor->setValue('BIPIN', $project->bipin ?? '');
+        $processor->setValue('BIPIN', $referenceCode);
+        $processor->setValue('BPIN', $referenceCode);
+        $processor->setValue('ID_PROYECTO', (string) ($project->id_proyecto ?? ''));
+        $processor->setValue('FUENTE_RECURSOS', strtoupper($fundingSource));
         $processor->setValue('FORMULADOR', $project->formulador?->name ?? '');
         $processor->setValue('FECHA', $this->formatFechaLarga(now()));
         $processor->saveAs($outputPath);

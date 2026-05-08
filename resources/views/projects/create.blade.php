@@ -35,6 +35,13 @@
                             <input name="bipin" value="{{ old('bipin') }}" class="mt-1 w-full rounded-md border-gray-300" />
                             @error('bipin')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
                         </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Fuente de recursos</label>
+                            <select name="funding_source" class="mt-1 w-full rounded-md border-gray-300" required>
+                                <option value="sgr" {{ old('funding_source', 'sgr') === 'sgr' ? 'selected' : '' }}>SGR</option>
+                                <option value="propios" {{ old('funding_source') === 'propios' ? 'selected' : '' }}>Recursos propios</option>
+                            </select>
+                        </div>
                         <div class="sm:col-span-2">
                             <label class="block text-sm font-medium text-gray-700">Objeto del proyecto</label>
                             <textarea name="objeto_proyecto" rows="3" class="mt-1 w-full rounded-md border-gray-300" required>{{ old('objeto_proyecto') }}</textarea>
@@ -67,17 +74,28 @@
 
                     <div>
                         <h3 class="text-lg font-semibold text-gray-800">Sectores</h3>
-                        <p class="text-sm text-gray-500">Selecciona uno o más sectores del proyecto.</p>
-                        <div class="mt-3 grid gap-2 sm:grid-cols-2">
-                            @foreach ($sectors as $sector)
-                                <label class="flex items-center gap-2 text-sm text-gray-700">
-                                    <input type="checkbox" name="sectores[]" value="{{ $sector->id }}" class="rounded border-gray-300"
-                                        {{ in_array($sector->id, old('sectores', [])) ? 'checked' : '' }}>
-                                    {{ $sector->nombre }}
-                                </label>
-                            @endforeach
+                        <p class="text-sm text-gray-500">Define un sector principal y, si aplica, sectores secundarios.</p>
+                        <div class="mt-3 grid gap-4 sm:grid-cols-2">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Sector principal</label>
+                                <select name="sector_principal_id" class="mt-1 w-full rounded-md border-gray-300" required>
+                                    <option value="">Selecciona...</option>
+                                    @foreach ($sectors as $sector)
+                                        <option value="{{ $sector->id }}" {{ (int) old('sector_principal_id') === (int) $sector->id ? 'selected' : '' }}>{{ $sector->nombre }}</option>
+                                    @endforeach
+                                </select>
+                                @error('sector_principal_id')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Sectores secundarios</label>
+                                <select name="sectores_secundarios[]" multiple class="mt-1 w-full rounded-md border-gray-300 h-40">
+                                    @foreach ($sectors as $sector)
+                                        <option value="{{ $sector->id }}" {{ in_array($sector->id, old('sectores_secundarios', [])) ? 'selected' : '' }}>{{ $sector->nombre }}</option>
+                                    @endforeach
+                                </select>
+                                @error('sectores_secundarios')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
+                            </div>
                         </div>
-                        @error('sectores')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
                     </div>
 
                     <div>

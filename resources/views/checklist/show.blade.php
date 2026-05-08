@@ -220,7 +220,81 @@
                                                 </div>
                                             </summary>
                                             <div class="p-4 space-y-3">
-                                                @foreach ($groups as $group)
+                                                @php
+                                                    $isSectorialFolder = \Illuminate\Support\Str::contains(
+                                                        \Illuminate\Support\Str::lower(\Illuminate\Support\Str::ascii((string) $carpeta)),
+                                                        'documentos sectoriales'
+                                                    );
+                                                    $sectorGroups = [];
+                                                    if ($isSectorialFolder) {
+                                                        $sectorOrder = collect($sectorCatalog['ordered'] ?? [])->pluck('normalized')->values()->all();
+                                                        foreach ($groups as $group) {
+                                                            $probe = $group['parent'] ?? ($group['children'][0] ?? null);
+                                                            $sectorLabel = trim((string) ($probe->sector ?? 'Sin sector'));
+                                                            $sectorNorm = trim(mb_strtolower(\Illuminate\Support\Str::ascii($sectorLabel)));
+                                                            if ($sectorNorm === '') {
+                                                                $sectorNorm = 'sin-sector';
+                                                                $sectorLabel = 'Sin sector';
+                                                            }
+                                                            $sectorGroups[$sectorNorm]['label'] = $sectorLabel;
+                                                            $sectorGroups[$sectorNorm]['groups'][] = $group;
+                                                        }
+
+                                                        uksort($sectorGroups, function ($a, $b) use ($sectorOrder) {
+                                                            $ai = array_search($a, $sectorOrder, true);
+                                                            $bi = array_search($b, $sectorOrder, true);
+                                                            $ai = $ai === false ? 999 : $ai;
+                                                            $bi = $bi === false ? 999 : $bi;
+                                                            return $ai <=> $bi ?: strcmp($a, $b);
+                                                        });
+                                                    } else {
+                                                        $sectorGroups = ['_default' => ['label' => null, 'groups' => $groups]];
+                                                    }
+                                                @endphp
+
+                                                @foreach ($sectorGroups as $sectorKey => $bucket)
+                                                    @php
+                                                        $sectorMeta = $isSectorialFolder ? collect($sectorCatalog['ordered'] ?? [])->firstWhere('normalized', $sectorKey) : null;
+                                                        $sectorTotal = 0;
+                                                        $sectorActive = 0;
+                                                        foreach ($bucket['groups'] as $tmpGroup) {
+                                                            $tmpReqs = collect();
+                                                            if (!empty($tmpGroup['parent'])) {
+                                                                $tmpReqs->push($tmpGroup['parent']);
+                                                            }
+                                                            if (!empty($tmpGroup['children'])) {
+                                                                foreach ($tmpGroup['children'] as $tmpChild) {
+                                                                    $tmpReqs->push($tmpChild);
+                                                                }
+                                                            }
+                                                            foreach ($tmpReqs as $tmpReq) {
+                                                                if (strtoupper((string) ($tmpReq->requiere_check ?? '')) === 'SI') {
+                                                                    $sectorTotal++;
+                                                                    if (in_array($tmpReq->id, $applied, true)) {
+                                                                        $sectorActive++;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    @endphp
+
+                                                    @if ($isSectorialFolder)
+                                                        <details class="rounded-md border border-gray-200" @if (($sectorMeta['is_primary'] ?? false) === true) open @endif>
+                                                            <summary class="cursor-pointer list-none bg-gray-50 px-3 py-2 flex items-center justify-between gap-3">
+                                                                <div class="text-xs font-semibold text-gray-700">
+                                                                    {{ $bucket['label'] }}
+                                                                    @if ($sectorMeta)
+                                                                        <span class="ml-2 text-[11px] {{ ($sectorMeta['is_primary'] ?? false) ? 'text-emerald-700' : 'text-sky-700' }}">
+                                                                            {{ ($sectorMeta['is_primary'] ?? false) ? 'Sector principal' : 'Sector secundario' }}
+                                                                        </span>
+                                                                    @endif
+                                                                </div>
+                                                                <div class="text-[11px] text-gray-500">{{ $sectorActive }} / {{ $sectorTotal }}</div>
+                                                            </summary>
+                                                            <div class="p-3 space-y-2">
+                                                    @endif
+
+                                                @foreach ($bucket['groups'] as $group)
                                                     @php
                                                         $parent = $group['parent'] ?? null;
                                                         $children = $group['children'] ?? [];
@@ -269,6 +343,12 @@
                                                             </div>
                                                         @endif
                                                     </div>
+                                                @endforeach
+
+                                                    @if ($isSectorialFolder)
+                                                            </div>
+                                                        </details>
+                                                    @endif
                                                 @endforeach
                                             </div>
                                         </details>

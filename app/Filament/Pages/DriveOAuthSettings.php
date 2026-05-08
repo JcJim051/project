@@ -107,4 +107,11 @@ class DriveOAuthSettings extends Page implements HasForms
             }
         }
     }
+
+    public static function canAccess(): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->isAdminUser());
+    }
 }

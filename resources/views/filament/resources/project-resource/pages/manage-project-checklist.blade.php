@@ -184,42 +184,124 @@
                                                 {{ $totals['active'] }} / {{ $totals['total'] }}
                                             </div>
                                         </summary>
-                                        <div class="p-3 space-y-3">
-                                            @foreach ($groups as $group)
-                                                @php
-                                                    $parent = $group['parent'] ?? null;
-                                                    $children = $group['children'] ?? [];
-                                                @endphp
-                                                <div class="space-y-2">
-                                                    @if ($parent)
-                                                        <label class="flex items-start gap-3 text-sm text-gray-700">
-                                                            @if (strtoupper((string) $parent->requiere_check) === 'SI')
-                                                                <input type="checkbox" name="aplica[]" value="{{ $parent->id }}" class="mt-1 rounded border-gray-300" {{ in_array($parent->id, $applied) ? 'checked' : '' }}>
-                                                            @endif
-                                                            <div>
-                                                                <div class="font-medium">{{ $parent->texto ?: $parent->requisito }}</div>
-                                                                <div class="text-xs text-gray-500">Documento: {{ $parent->nombre_documento }}{{ $parent->codigo_interno ? ' | Código: ' . $parent->codigo_interno : '' }}</div>
+                                        @php
+                                            $isSectorialFolder = \Illuminate\Support\Str::contains(
+                                                \Illuminate\Support\Str::lower(\Illuminate\Support\Str::ascii((string) $carpeta)),
+                                                'documentos sectoriales'
+                                            );
+                                        @endphp
+
+                                        @if ($isSectorialFolder)
+                                            @php
+                                                $sectorBuckets = [];
+                                                foreach (($sectorCatalog['ordered'] ?? []) as $sectorRow) {
+                                                    $k = (string) ($sectorRow['normalized'] ?? '');
+                                                    if ($k === '') {
+                                                        continue;
+                                                    }
+                                                    $sectorBuckets[$k] = [
+                                                        'label' => (string) ($sectorRow['name'] ?? $k),
+                                                        'is_primary' => (bool) ($sectorRow['is_primary'] ?? false),
+                                                        'requirements' => collect(),
+                                                    ];
+                                                }
+
+                                                foreach ($groups as $group) {
+                                                    if (!empty($group['parent'])) {
+                                                        $req = $group['parent'];
+                                                        $k = trim(mb_strtolower(\Illuminate\Support\Str::ascii((string) ($req->sector ?? ''))));
+                                                        if (!isset($sectorBuckets[$k])) {
+                                                            continue;
+                                                        }
+                                                        $sectorBuckets[$k]['requirements']->push($req);
+                                                    }
+                                                    foreach (($group['children'] ?? []) as $req) {
+                                                        $k = trim(mb_strtolower(\Illuminate\Support\Str::ascii((string) ($req->sector ?? ''))));
+                                                        if (!isset($sectorBuckets[$k])) {
+                                                            continue;
+                                                        }
+                                                        $sectorBuckets[$k]['requirements']->push($req);
+                                                    }
+                                                }
+
+                                                foreach ($sectorBuckets as $k => $bucket) {
+                                                    $sectorBuckets[$k]['requirements'] = $bucket['requirements']
+                                                        ->unique('id')
+                                                        ->sortBy(function ($req) {
+                                                            return sprintf('%08d-%s', (int) ($req->orden ?? 0), (string) ($req->codigo_interno ?? ''));
+                                                        })
+                                                        ->values();
+                                                }
+                                            @endphp
+
+                                            <div class="space-y-2">
+                                                @foreach ($sectorBuckets as $bucket)
+                                                    <details class="rounded-md border border-gray-200">
+                                                        <summary class="cursor-pointer list-none bg-gray-50 px-3 py-2">
+                                                            <div class="text-xs font-semibold text-gray-700">
+                                                                {{ $bucket['label'] }}
+                                                                <span class="ml-2 text-[11px] {{ $bucket['is_primary'] ? 'text-emerald-700' : 'text-sky-700' }}">
+                                                                    {{ $bucket['is_primary'] ? 'Sector principal' : 'Sector secundario' }}
+                                                                </span>
                                                             </div>
-                                                        </label>
-                                                    @endif
-                                                    @if (!empty($children))
-                                                        <div class="pl-6 border-l border-gray-100 space-y-2">
-                                                            @foreach ($children as $child)
+                                                        </summary>
+                                                        <div class="p-3 space-y-2">
+                                                            @if ($bucket['requirements']->isEmpty())
+                                                                <div class="text-xs text-gray-500">No hay requisitos sectoriales para este sector.</div>
+                                                            @endif
+                                                            @foreach ($bucket['requirements'] as $req)
                                                                 <label class="flex items-start gap-3 text-sm text-gray-700">
-                                                                    @if (strtoupper((string) $child->requiere_check) === 'SI')
-                                                                        <input type="checkbox" name="aplica[]" value="{{ $child->id }}" class="mt-1 rounded border-gray-300" {{ in_array($child->id, $applied) ? 'checked' : '' }}>
+                                                                    @if (strtoupper((string) $req->requiere_check) === 'SI')
+                                                                        <input type="checkbox" name="aplica[]" value="{{ $req->id }}" class="mt-1 rounded border-gray-300" {{ in_array($req->id, $applied) ? 'checked' : '' }}>
                                                                     @endif
                                                                     <div>
-                                                                        <div class="font-medium">{{ $child->texto ?: $child->requisito }}</div>
-                                                                        <div class="text-xs text-gray-500">Documento: {{ $child->nombre_documento }}{{ $child->codigo_interno ? ' | Código: ' . $child->codigo_interno : '' }}</div>
+                                                                        <div class="font-medium">{{ $req->texto ?: $req->requisito }}</div>
+                                                                        <div class="text-xs text-gray-500">Documento: {{ $req->nombre_documento }}{{ $req->codigo_interno ? ' | Código: ' . $req->codigo_interno : '' }}</div>
                                                                     </div>
                                                                 </label>
                                                             @endforeach
                                                         </div>
-                                                    @endif
-                                                </div>
-                                            @endforeach
-                                        </div>
+                                                    </details>
+                                                @endforeach
+                                            </div>
+                                        @else
+                                            <div class="p-3 space-y-3">
+                                                @foreach ($groups as $group)
+                                                    @php
+                                                        $parent = $group['parent'] ?? null;
+                                                        $children = $group['children'] ?? [];
+                                                    @endphp
+                                                    <div class="space-y-2">
+                                                        @if ($parent)
+                                                            <label class="flex items-start gap-3 text-sm text-gray-700">
+                                                                @if (strtoupper((string) $parent->requiere_check) === 'SI')
+                                                                    <input type="checkbox" name="aplica[]" value="{{ $parent->id }}" class="mt-1 rounded border-gray-300" {{ in_array($parent->id, $applied) ? 'checked' : '' }}>
+                                                                @endif
+                                                                <div>
+                                                                    <div class="font-medium">{{ $parent->texto ?: $parent->requisito }}</div>
+                                                                    <div class="text-xs text-gray-500">Documento: {{ $parent->nombre_documento }}{{ $parent->codigo_interno ? ' | Código: ' . $parent->codigo_interno : '' }}</div>
+                                                                </div>
+                                                            </label>
+                                                        @endif
+                                                        @if (!empty($children))
+                                                            <div class="pl-6 border-l border-gray-100 space-y-2">
+                                                                @foreach ($children as $child)
+                                                                    <label class="flex items-start gap-3 text-sm text-gray-700">
+                                                                        @if (strtoupper((string) $child->requiere_check) === 'SI')
+                                                                            <input type="checkbox" name="aplica[]" value="{{ $child->id }}" class="mt-1 rounded border-gray-300" {{ in_array($child->id, $applied) ? 'checked' : '' }}>
+                                                                        @endif
+                                                                        <div>
+                                                                            <div class="font-medium">{{ $child->texto ?: $child->requisito }}</div>
+                                                                            <div class="text-xs text-gray-500">Documento: {{ $child->nombre_documento }}{{ $child->codigo_interno ? ' | Código: ' . $child->codigo_interno : '' }}</div>
+                                                                        </div>
+                                                                    </label>
+                                                                @endforeach
+                                                            </div>
+                                                        @endif
+                                                    </div>
+                                                @endforeach
+                                            </div>
+                                        @endif
                                     </details>
                                 @endforeach
                             </div>

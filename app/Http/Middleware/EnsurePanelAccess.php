@@ -6,12 +6,13 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-class EnsureAdminAccess
+class EnsurePanelAccess
 {
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
-        if (!$user || !$user->isAdminUser()) {
+
+        if (!$user || !$user->canAccessPanel()) {
             abort(403);
         }
 

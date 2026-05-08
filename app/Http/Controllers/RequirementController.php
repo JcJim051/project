@@ -480,7 +480,7 @@ class RequirementController extends Controller
     private function authorizeAdmin(): void
     {
         $user = auth()->user();
-        if (!$user || !$user->is_admin) {
+        if (!$user || !$user->canManageParametrizacion()) {
             abort(403);
         }
     }

@@ -14,6 +14,7 @@ class Project extends Model
         'objeto_proyecto',
         'id_proyecto',
         'bipin',
+        'funding_source',
         'nombre_clave',
         'municipio',
         'secretaria',
@@ -30,7 +31,8 @@ class Project extends Model
 
     public function sectores()
     {
-        return $this->belongsToMany(Sector::class, 'project_sector');
+        return $this->belongsToMany(Sector::class, 'project_sector')
+            ->withPivot('is_primary');
     }
 
     public function formulador()

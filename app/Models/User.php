@@ -9,6 +9,7 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
 use Laravel\Jetstream\HasProfilePhoto;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Support\Collection;
 
 class User extends Authenticatable
 {
@@ -75,9 +76,78 @@ class User extends Authenticatable
         return $this->roles()->where('slug', $slug)->exists();
     }
 
+    public function hasAnyRole(array $slugs): bool
+    {
+        $slugs = collect($slugs)
+            ->filter(fn ($slug) => is_string($slug) && $slug !== '')
+            ->values()
+            ->all();
+
+        if (empty($slugs)) {
+            return false;
+        }
+
+        if ($this->relationLoaded('roles')) {
+            $current = $this->roles->pluck('slug')->all();
+            return !empty(array_intersect($slugs, $current));
+        }
+
+        return $this->roles()->whereIn('slug', $slugs)->exists();
+    }
+
+    public function roleSlugs(): Collection
+    {
+        if ($this->relationLoaded('roles')) {
+            return $this->roles->pluck('slug');
+        }
+
+        return $this->roles()->pluck('slug');
+    }
+
+    public function isAdminUser(): bool
+    {
+        return $this->is_admin || $this->hasRole('admin');
+    }
+
+    public function canAccessPanel(): bool
+    {
+        if ($this->isAdminUser()) {
+            return true;
+        }
+
+        return $this->hasAnyRole([
+            'director',
+            'formulador',
+            'estructurador',
+            'consulta',
+            'formulador_maestro',
+        ]);
+    }
+
+    public function canManageUsersModule(): bool
+    {
+        return $this->isAdminUser() || $this->hasRole('director');
+    }
+
+    public function canManageParametrizacion(): bool
+    {
+        return $this->isAdminUser()
+            || $this->hasAnyRole(['director', 'formulador_maestro']);
+    }
+
+    public function isReadOnlyUser(): bool
+    {
+        return $this->hasRole('consulta');
+    }
+
+    public function canMutateProjects(): bool
+    {
+        return $this->canAccessPanel() && !$this->isReadOnlyUser();
+    }
+
     public function hasPermission(string $slug): bool
     {
-        if ($this->is_admin || $this->hasRole('admin')) {
+        if ($this->isAdminUser()) {
             return true;
         }
 

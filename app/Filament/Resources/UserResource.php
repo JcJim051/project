@@ -3,16 +3,14 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\UserResource\Pages;
+use App\Models\Role;
 use App\Models\User;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Toggle;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
-use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
-use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\Hash;
@@ -52,13 +50,20 @@ class UserResource extends Resource
                     ->required(fn (string $operation): bool => $operation === 'create')
                     ->dehydrated(fn (?string $state): bool => filled($state))
                     ->dehydrateStateUsing(fn (string $state): string => Hash::make($state)),
-                Toggle::make('is_admin')
-                    ->label('Administrador')
-                    ->inline(false),
                 Select::make('roles')
                     ->label('Roles')
                     ->relationship('roles', 'name')
                     ->multiple()
+                    ->required()
+                    ->minItems(1)
+                    ->maxItems(1)
+                    ->default(function (): array {
+                        $defaultRoleId = Role::query()
+                            ->where('slug', 'consulta')
+                            ->value('id');
+
+                        return $defaultRoleId ? [(int) $defaultRoleId] : [];
+                    })
                     ->preload()
                     ->searchable(),
             ]);
@@ -80,17 +85,12 @@ class UserResource extends Resource
                     ->label('Roles')
                     ->badge()
                     ->separator(','),
-                IconColumn::make('is_admin')
-                    ->label('Admin')
-                    ->boolean(),
                 TextColumn::make('updated_at')
                     ->label('Actualizado')
                     ->dateTime('Y-m-d H:i')
                     ->sortable(),
             ])
             ->filters([
-                TernaryFilter::make('is_admin')
-                    ->label('Solo admins'),
                 SelectFilter::make('roles')
                     ->relationship('roles', 'name')
                     ->label('Rol'),
@@ -119,5 +119,27 @@ class UserResource extends Resource
             'create' => Pages\CreateUser::route('/create'),
             'edit' => Pages\EditUser::route('/{record}/edit'),
         ];
+    }
+
+    public static function canViewAny(): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->canManageUsersModule());
+    }
+
+    public static function canCreate(): bool
+    {
+        return static::canViewAny();
+    }
+
+    public static function canEdit($record): bool
+    {
+        return static::canViewAny();
+    }
+
+    public static function canDelete($record): bool
+    {
+        return static::canViewAny();
     }
 }

@@ -44,6 +44,7 @@ class AttachmentPackageRunController extends Controller
 
     public function store(Project $project)
     {
+        $this->authorizeProjectMutation();
         $this->expireStaleRuns($project->id);
 
         $activeRun = AttachmentPackageRun::query()
@@ -170,5 +171,13 @@ class AttachmentPackageRunController extends Controller
             'error_message' => 'Proceso marcado como vencido por inactividad (15 min).',
             'finished_at' => now(),
         ]);
+    }
+
+    private function authorizeProjectMutation(): void
+    {
+        $user = auth()->user();
+        if (!$user || !$user->canMutateProjects()) {
+            abort(403);
+        }
     }
 }

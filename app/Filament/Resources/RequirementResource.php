@@ -25,7 +25,7 @@ class RequirementResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-clipboard-document-list';
 
-    protected static ?string $navigationGroup = 'Requisitos';
+    protected static ?string $navigationGroup = 'Parametrizacion';
 
     protected static ?string $modelLabel = 'Requisito';
 
@@ -201,5 +201,27 @@ class RequirementResource extends Resource
             'create' => Pages\CreateRequirement::route('/create'),
             'edit' => Pages\EditRequirement::route('/{record}/edit'),
         ];
+    }
+
+    public static function canViewAny(): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->canManageParametrizacion());
+    }
+
+    public static function canCreate(): bool
+    {
+        return static::canViewAny();
+    }
+
+    public static function canEdit($record): bool
+    {
+        return static::canViewAny();
+    }
+
+    public static function canDelete($record): bool
+    {
+        return static::canViewAny();
     }
 }

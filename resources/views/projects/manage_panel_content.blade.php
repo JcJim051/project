@@ -27,6 +27,9 @@
                     if (($item->drive_folder_name ?? null) !== ($req->carpeta ?? null)) {
                         return false;
                     }
+                    if (!(bool) ($item->in_drive ?? false)) {
+                        return false;
+                    }
                     $name = strtolower($item->drive_file_name ?? '');
                     $isPdf = $item->drive_mime_type === 'application/pdf' || str_ends_with($name, '.pdf');
                     $isEditable = in_array($item->drive_mime_type, [
@@ -43,7 +46,12 @@
                         'application/x-msproject',
                     ], true) || preg_match('/\.(docx?|xlsx?|pptx?|mpp)$/', $name);
                     return $isPdf || $isEditable;
-                })->values();
+                })
+                ->sortByDesc('id')
+                ->unique(function ($item) {
+                    return $item->drive_file_id ?: mb_strtolower((string) ($item->drive_file_name ?? ''));
+                })
+                ->values();
 
                 $calcNumeracion = $renumerated[$req->id] ?? $req->codigo_interno ?? $req->numeracion;
                 $validEvidenceCount = $reqEvidences
@@ -97,8 +105,23 @@
                             'source' => $evidence->source,
                             'is_valid' => (bool) $evidence->in_drive,
                             'unlink_url' => route('projects.requirements.unlink_drive_file', [$project, $req, $evidence]),
+                            'delete_drive_url' => route('projects.requirements.delete_drive_file', [$project, $req, $evidence]),
                         ];
                     })->all(),
+                    'history' => $reqEvidences
+                        ->sortByDesc('id')
+                        ->values()
+                        ->map(function ($evidence) {
+                            return [
+                                'id' => $evidence->id,
+                                'name' => $evidence->drive_file_name,
+                                'file_id' => $evidence->drive_file_id,
+                                'source' => $evidence->source,
+                                'is_valid' => (bool) $evidence->in_drive,
+                                'created_at' => optional($evidence->created_at)->format('Y-m-d H:i'),
+                            ];
+                        })
+                        ->all(),
                 ];
             }
 
@@ -111,6 +134,11 @@
                 'percent' => $progress['percent'],
                 'requirement_ids' => $folderReqIds,
             ];
+        }
+
+        $firstRequirementId = null;
+        if (!empty($panelRequirements)) {
+            $firstRequirementId = (int) array_key_first($panelRequirements);
         }
 
         $groupLabels = [
@@ -377,6 +405,11 @@
                 bulkFiles: [],
                 bulkRows: [],
                 bulkReport: null,
+                uploadBusy: false,
+                uploadMessage: '',
+                uploadMessageType: '',
+                uploadTimer: null,
+                historyOpen: false,
                 init() {
                     this.selectInitial();
                 },
@@ -565,6 +598,22 @@
                     const found = req.evidences.find(e => !!e.file_id);
                     return found ? `https://drive.google.com/file/d/${found.file_id}/view` : null;
                 },
+                currentEvidence(req) {
+                    if (!req || !Array.isArray(req.evidences) || req.evidences.length === 0) return null;
+                    return req.evidences[0] || null;
+                },
+                currentDisplayName(req) {
+                    const e = this.currentEvidence(req);
+                    return e?.name || req?.title || '';
+                },
+                openHistoryModal() {
+                    const req = this.currentRequirement();
+                    if (!req) return;
+                    this.historyOpen = true;
+                },
+                closeHistoryModal() {
+                    this.historyOpen = false;
+                },
                 async loadDriveFiles(req) {
                     if (!req) return;
                     this.drivePickerLoading = true;
@@ -751,6 +800,115 @@
                         alert(error.message || "Error quitando la asignación.");
                     }
                 },
+                async deleteEvidenceFromDrive(evidence) {
+                    if (!evidence || !evidence.delete_drive_url) return;
+                    if (!confirm("¿Borrar este archivo de Drive? Esta acción no se puede deshacer.")) return;
+                    try {
+                        const response = await fetch(evidence.delete_drive_url, {
+                            method: "DELETE",
+                            headers: {
+                                "Accept": "application/json",
+                                "X-CSRF-TOKEN": this.csrfToken,
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                            credentials: "same-origin",
+                        });
+                        const data = await response.json();
+                        if (!response.ok || !data.ok) {
+                            throw new Error(data.message || "No se pudo borrar el archivo en Drive.");
+                        }
+                        window.location.reload();
+                    } catch (error) {
+                        alert(error.message || "Error borrando archivo en Drive.");
+                    }
+                },
+                setUploadMessage(type, text) {
+                    this.uploadMessageType = type;
+                    this.uploadMessage = text || '';
+                    if (this.uploadTimer) {
+                        clearTimeout(this.uploadTimer);
+                    }
+                    this.uploadTimer = setTimeout(() => {
+                        this.uploadMessage = '';
+                        this.uploadMessageType = '';
+                    }, 6000);
+                },
+                requirementFulfillmentSource(req) {
+                    if (!req || !Array.isArray(req.evidences)) return 'none';
+                    const valid = req.evidences.filter(e => !!e.is_valid);
+                    if (valid.some(e => String(e.source || '').toLowerCase() === 'manual_link')) return 'manual';
+                    if (valid.some(e => ['auto_match','drive'].includes(String(e.source || '').toLowerCase()))) return 'auto';
+                    if (valid.some(e => String(e.source || '').toLowerCase() === 'upload')) return 'upload';
+                    return 'none';
+                },
+                async uploadCurrentRequirement(event) {
+                    const req = this.currentRequirement();
+                    if (!req || this.uploadBusy) return;
+
+                    const form = event?.target;
+                    if (!form) return;
+                    const input = form.querySelector('input[name="archivos[]"]');
+                    if (!input || !input.files || input.files.length === 0) {
+                        this.setUploadMessage('error', 'Debes seleccionar al menos un archivo.');
+                        return;
+                    }
+
+                    const formData = new FormData(form);
+                    this.uploadBusy = true;
+                    this.setUploadMessage('', '');
+
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 90000);
+
+                    try {
+                        const response = await fetch(req.upload_url, {
+                            method: 'POST',
+                            body: formData,
+                            headers: {
+                                'Accept': 'application/json',
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'X-CSRF-TOKEN': this.csrfToken,
+                            },
+                            credentials: 'same-origin',
+                            signal: controller.signal,
+                        });
+
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok || !data.ok) {
+                            throw new Error(data.message || 'No se pudo completar la carga, intenta de nuevo.');
+                        }
+
+                        const updated = data.requirement || null;
+                        if (updated && this.requirements[req.id]) {
+                            const existing = this.requirements[req.id];
+                            const existingById = new Map((existing.evidences || []).map(e => [e.id, e]));
+                            const mergedEvidences = (updated.evidences || []).map(e => {
+                                const prev = existingById.get(e.id) || {};
+                                return {
+                                    ...prev,
+                                    ...e,
+                                    unlink_url: prev.unlink_url || e.unlink_url || null,
+                                };
+                            });
+                            existing.evidences = mergedEvidences;
+                            existing.has_evidence = !!updated.has_evidence;
+                            existing.valid_evidence_count = Number(updated.valid_evidence_count || 0);
+                            existing.fulfillment_source = this.requirementFulfillmentSource(existing);
+                        }
+
+                        form.reset();
+                        this.setUploadMessage('success', data.message || 'Evidencias cargadas en Drive.');
+                    } catch (error) {
+                        if (error.name === 'AbortError') {
+                            this.setUploadMessage('error', 'La carga tardó demasiado. Intenta nuevamente.');
+                        } else {
+                            this.setUploadMessage('error', error.message || 'No se pudo completar la carga, intenta de nuevo.');
+                        }
+                    } finally {
+                        clearTimeout(timeout);
+                        this.uploadBusy = false;
+                    }
+                },
                 goNextMissing() {
                     const list = this.requirementsInSelectedSubgroup();
                     if (list.length === 0) return;
@@ -782,11 +940,22 @@
                 </div>
             @endif
 
+            @if (session('error'))
+                <div class="rounded-md bg-rose-50 p-4 text-rose-700 text-sm">
+                    {{ session('error') }}
+                </div>
+            @endif
+
             @if ($errors->any())
                 <div class="rounded-md bg-rose-50 p-4 text-rose-700 text-sm">
                     {{ $errors->first() }}
                 </div>
             @endif
+
+            <div x-show="uploadMessage" x-cloak class="rounded-md p-3 text-sm"
+                :class="uploadMessageType === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'"
+                x-text="uploadMessage">
+            </div>
 
             @if (!$driveConnected)
                 <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm flex items-center justify-between">
@@ -871,6 +1040,14 @@
                             class="h-8 px-3 inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors">
                             Crear certificaciones
                         </a>
+                        <form method="POST" action="{{ route('projects.manage.renumber', $project) }}" onsubmit="return confirm('¿Renumerar archivos cargados de este proyecto?');">
+                            @csrf
+                            <button
+                                type="submit"
+                                class="h-8 px-3 inline-flex items-center rounded-md border border-fuchsia-300 bg-fuchsia-50 text-fuchsia-700 text-xs font-medium hover:bg-fuchsia-100 transition-colors">
+                                Renumerar archivos
+                            </button>
+                        </form>
                         <button
                             type="button"
                             @click="toggleOnlyPendingGlobal()"
@@ -995,7 +1172,7 @@
 
                                         <template x-if="currentRequirement()">
                                             <div class="space-y-4">
-                                                <div class="text-sm font-semibold text-gray-800" x-text="currentRequirement().title"></div>
+                                                <div class="text-sm font-semibold text-gray-800" x-text="currentDisplayName(currentRequirement())"></div>
                                                 <div>
                                                     <span
                                                         class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium"
@@ -1014,38 +1191,52 @@
                                                 </div>
 
                                                 <div class="space-y-2">
-                                                    <template x-if="(currentRequirement().evidences || []).length === 0">
+                                                    <template x-if="!currentEvidence(currentRequirement())">
                                                         <div class="text-xs text-gray-500">No hay evidencias visibles para este requisito.</div>
                                                     </template>
-                                                    <template x-for="(evidence, i) in (currentRequirement().evidences || [])" :key="`evi-${i}`">
+                                                    <template x-if="currentEvidence(currentRequirement())">
                                                         <div class="rounded-md border border-gray-200 p-2 text-xs">
                                                             <div class="flex items-start justify-between gap-2">
-                                                                <div class="font-medium text-gray-700 truncate" x-text="evidence.name"></div>
-                                                            <div class="flex items-center gap-2 shrink-0">
-                                                                <a
-                                                                    x-show="evidence.file_id"
-                                                                    :href="`https://drive.google.com/file/d/${evidence.file_id}/view`"
-                                                                    target="_blank"
-                                                                    rel="noopener"
-                                                                    class="text-indigo-600 hover:text-indigo-700">
-                                                                    Ver
-                                                                </a>
-                                                                <button
-                                                                    type="button"
-                                                                    x-show="evidence.source === 'manual_link'"
-                                                                    @click="unlinkEvidence(evidence)"
-                                                                    class="text-rose-600 hover:text-rose-700">
-                                                                    Quitar
-                                                                </button>
-                                                                <span x-show="!evidence.file_id" class="text-[11px] text-gray-500">Pendiente</span>
+                                                                <div class="font-medium text-gray-700 truncate" x-text="currentEvidence(currentRequirement()).name"></div>
+                                                                <div class="flex items-center gap-2 shrink-0">
+                                                                    <a
+                                                                        x-show="currentEvidence(currentRequirement()).file_id"
+                                                                        :href="`https://drive.google.com/file/d/${currentEvidence(currentRequirement()).file_id}/view`"
+                                                                        target="_blank"
+                                                                        rel="noopener"
+                                                                        class="text-indigo-600 hover:text-indigo-700">
+                                                                        Ver
+                                                                    </a>
+                                                                    <button
+                                                                        type="button"
+                                                                        x-show="currentEvidence(currentRequirement()).source === 'manual_link'"
+                                                                        @click="unlinkEvidence(currentEvidence(currentRequirement()))"
+                                                                        class="text-rose-600 hover:text-rose-700">
+                                                                        Quitar
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        x-show="currentEvidence(currentRequirement()).file_id"
+                                                                        @click="deleteEvidenceFromDrive(currentEvidence(currentRequirement()))"
+                                                                        class="text-rose-700 hover:text-rose-800">
+                                                                        Borrar
+                                                                    </button>
+                                                                </div>
                                                             </div>
-                                                            </div>
-                                                            <div class="text-[11px]" :class="evidence.is_valid ? 'text-emerald-600' : 'text-amber-700'" x-text="evidence.is_valid ? 'Evidencia válida' : 'No disponible o no válida para este requisito'"></div>
+                                                            <div class="mt-1 text-[11px] text-emerald-600">Evidencia vigente</div>
                                                         </div>
                                                     </template>
+                                                    <button type="button" @click="openHistoryModal()" class="h-8 px-3 rounded-md border border-gray-300 bg-white text-gray-700 text-xs font-medium hover:bg-gray-50">
+                                                        Ver historial
+                                                    </button>
                                                 </div>
 
-                                                <form method="POST" enctype="multipart/form-data" :action="currentRequirement().upload_url" class="space-y-3 pt-1">
+                                                <form method="POST"
+                                                    enctype="multipart/form-data"
+                                                    action="{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}"
+                                                    x-bind:action="currentRequirement() ? currentRequirement().upload_url : '{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}'"
+                                                    @submit.prevent="uploadCurrentRequirement($event)"
+                                                    class="space-y-3 pt-1">
                                                     @csrf
                                                     <div>
                                                         <label class="text-xs font-medium text-gray-600">Cargar evidencias</label>
@@ -1054,9 +1245,10 @@
                                                     <div class="sticky bottom-0 pt-2">
                                                         <button
                                                             type="submit"
-                                                            class="w-full h-9 rounded-md text-xs font-medium shadow-sm border"
+                                                            class="w-full h-9 rounded-md text-xs font-medium shadow-sm border disabled:opacity-60 disabled:cursor-not-allowed"
+                                                            :disabled="uploadBusy"
                                                             style="background:#4f46e5;color:#ffffff;border-color:#4338ca;">
-                                                            Enviar
+                                                            <span x-text="uploadBusy ? 'Subiendo...' : 'Enviar'"></span>
                                                         </button>
                                                     </div>
                                                 </form>
@@ -1156,6 +1348,41 @@
                     <div class="gp-modal-foot px-4 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
                         <button type="button" @click="closeBulkLinker()" class="h-8 px-3 rounded-md border border-gray-300 text-xs text-gray-700 hover:bg-gray-50">Cancelar</button>
                         <button type="button" @click="submitBulkLink()" :disabled="bulkLoading" class="h-8 px-3 rounded-md bg-sky-600 text-white text-xs font-medium disabled:opacity-50">Aplicar vínculo masivo</button>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="historyOpen" x-cloak @click.self="closeHistoryModal()" x-on:keydown.escape.window="closeHistoryModal()" class="gp-modal-overlay">
+                <div class="gp-modal-card">
+                    <div class="gp-modal-head px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                        <div class="text-sm font-semibold text-gray-800">Historial de archivos asociados</div>
+                        <button type="button" @click="closeHistoryModal()" class="text-xs text-gray-500 hover:text-gray-700">Cerrar</button>
+                    </div>
+                    <div class="gp-modal-body p-4 space-y-3">
+                        <div class="text-xs text-gray-600" x-text="currentRequirement() ? currentRequirement().title : ''"></div>
+                        <div class="gp-modal-list border border-gray-100 rounded-md">
+                            <template x-if="!currentRequirement() || !(currentRequirement().history || []).length">
+                                <div class="p-3 text-xs text-gray-500">Sin historial para este requisito.</div>
+                            </template>
+                            <template x-for="item in (currentRequirement() && currentRequirement().history ? currentRequirement().history : [])" :key="`hist-${item.id}`">
+                                <div class="p-3 border-b border-gray-100 last:border-b-0">
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div class="text-xs font-medium text-gray-700 break-all" x-text="item.name || 'Sin nombre'"></div>
+                                        <a x-show="item.file_id" :href="`https://drive.google.com/file/d/${item.file_id}/view`" target="_blank" rel="noopener" class="text-[11px] text-indigo-600 hover:text-indigo-700">Ver</a>
+                                    </div>
+                                    <div class="mt-1 text-[11px] text-gray-500">
+                                        <span x-text="item.created_at || '-'"></span>
+                                        <span class="mx-1">·</span>
+                                        <span x-text="item.source || 'n/a'"></span>
+                                        <span class="mx-1">·</span>
+                                        <span :class="item.is_valid ? 'text-emerald-600' : 'text-amber-700'" x-text="item.is_valid ? 'vigente' : 'histórico/no disponible'"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="gp-modal-foot px-4 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                        <button type="button" @click="closeHistoryModal()" class="h-8 px-3 rounded-md border border-gray-300 text-xs text-gray-700 hover:bg-gray-50">Cerrar</button>
                     </div>
                 </div>
             </div>

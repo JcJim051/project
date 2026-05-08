@@ -12,7 +12,7 @@ class DriveSettingsController extends Controller
     public function edit(GoogleDriveService $driveService)
     {
         $user = auth()->user();
-        abort_unless($user && ($user->is_admin || $user->hasRole('admin')), 403);
+        abort_unless($user && $user->isAdminUser(), 403);
 
         $setting = DriveOAuthSetting::query()->latest('id')->first();
         $active = $driveService->oauthCredentials();
@@ -26,7 +26,7 @@ class DriveSettingsController extends Controller
     public function update(Request $request, GoogleDriveService $driveService)
     {
         $user = auth()->user();
-        abort_unless($user && ($user->is_admin || $user->hasRole('admin')), 403);
+        abort_unless($user && $user->isAdminUser(), 403);
 
         $data = $request->validate([
             'client_id' => ['required', 'string', 'max:4000'],

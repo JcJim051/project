@@ -20,7 +20,7 @@ class DocumentTemplateResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-document-text';
 
-    protected static ?string $navigationGroup = 'Configuracion';
+    protected static ?string $navigationGroup = 'Parametrizacion';
 
     protected static ?string $modelLabel = 'Plantilla';
 
@@ -104,5 +104,27 @@ class DocumentTemplateResource extends Resource
             'create' => Pages\CreateDocumentTemplate::route('/create'),
             'edit' => Pages\EditDocumentTemplate::route('/{record}/edit'),
         ];
+    }
+
+    public static function canViewAny(): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->canManageParametrizacion());
+    }
+
+    public static function canCreate(): bool
+    {
+        return static::canViewAny();
+    }
+
+    public static function canEdit($record): bool
+    {
+        return static::canViewAny();
+    }
+
+    public static function canDelete($record): bool
+    {
+        return static::canViewAny();
     }
 }
