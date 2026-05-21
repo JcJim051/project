@@ -35,6 +35,15 @@ return [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
         'redirect' => env('GOOGLE_REDIRECT_URI'),
+        'projects_root_folder_id' => env('GOOGLE_PROJECTS_ROOT_FOLDER_ID'),
+        'project_base_folders' => array_values(array_filter(array_map('trim', explode(',', (string) env(
+            'GOOGLE_PROJECT_BASE_FOLDERS',
+            '01 Estructuracion,02 Cargue'
+        ))))),
+        'project_structuring_folders' => array_values(array_filter(array_map('trim', explode(',', (string) env(
+            'GOOGLE_PROJECT_STRUCTURING_FOLDERS',
+            '01 Formulacion,02 Presupuesto,03 Certificaciones,04 Licencias y Permisos,05 Estudios y Diseños'
+        ))))),
         'timeout' => (int) env('GOOGLE_HTTP_TIMEOUT', 120),
         'connect_timeout' => (int) env('GOOGLE_HTTP_CONNECT_TIMEOUT', 20),
         'download_retries' => (int) env('GOOGLE_DOWNLOAD_RETRIES', 4),

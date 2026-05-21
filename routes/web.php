@@ -27,6 +27,7 @@ Route::middleware([
 ])->get('/drive/auth', [DriveAuthController::class, 'redirect'])->name('drive.auth');
 
 Route::get('/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback');
+Route::get('/panel/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback.panel');
 
 Route::middleware([
     'auth',

@@ -162,11 +162,23 @@ class ProjectResource extends Resource
                             ->maxLength(500)
                             ->rows(4)
                             ->columnSpanFull(),
+                        Select::make('drive_setup_mode')
+                            ->label('Configuración carpeta Drive')
+                            ->options([
+                                'auto' => 'Automática (crear proyecto base en Drive)',
+                                'manual' => 'Manual (pegar ruta/ID existente)',
+                            ])
+                            ->default('auto')
+                            ->live()
+                            ->dehydrated(fn (string $operation): bool => $operation === 'create')
+                            ->visible(fn (string $operation): bool => $operation === 'create')
+                            ->columnSpanFull(),
                         TextInput::make('ruta_drive')
                             ->label('Ruta Drive')
                             ->maxLength(500)
+                            ->required(fn (Get $get, string $operation): bool => $operation === 'create' && $get('drive_setup_mode') === 'manual')
                             ->columnSpanFull()
-                            ->helperText('Acepta URL de carpeta o solo ID.'),
+                            ->helperText('Modo manual: acepta URL de carpeta o solo ID. En modo automático la plataforma creará la estructura base.'),
                         TextInput::make('drive_folder_id')
                             ->label('ID carpeta Drive')
                             ->disabled()

@@ -304,7 +304,7 @@
             grid-column: span 6 / span 6;
             display: grid;
             gap: 0.75rem;
-            grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+            grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
             height: 74vh;
         }
         .group-btn {
@@ -440,6 +440,14 @@
                 },
                 activeClassFor(code) {
                     return `active-${code}`;
+                },
+                uploadButtonClass() {
+                    const code = this.selectedGroupCode || "01";
+                    if (code === "01") return "bg-blue-300 hover:bg-blue-400 ring-blue-200";
+                    if (code === "02") return "bg-emerald-300 hover:bg-emerald-400 ring-emerald-200";
+                    if (code === "03") return "bg-amber-300 hover:bg-amber-400 ring-amber-200";
+                    if (code === "04") return "bg-indigo-300 hover:bg-indigo-400 ring-indigo-200";
+                    return "bg-pink-300 hover:bg-pink-400 ring-pink-200";
                 },
                 groupSelectedClass(code) {
                     return `ring-1 ring-inset ${this.activeClassFor(code)}`;
@@ -968,18 +976,6 @@
                 <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm">
                     Este proyecto no tiene carpeta de Drive configurada. Agrega la ruta en Editar proyecto.
                 </div>
-            @elseif ($driveConnected && $driveReady)
-                <div class="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-sky-700 text-sm flex items-center justify-between gap-2">
-                    <span class="font-medium">Drive conectado.</span>
-                    <div class="flex items-center gap-2">
-                        <a href="{{ route('filament.admin.resources.projects.manage', ['record' => $project]) }}?sync=1" class="h-8 px-3 inline-flex items-center rounded-md border border-sky-300 bg-white text-sky-700 text-xs font-medium hover:bg-sky-100 transition-colors">
-                            Sincronizar ahora
-                        </a>
-                        <a href="{{ route('filament.admin.resources.projects.manage', ['record' => $project]) }}?sync=1&debug=1" class="h-8 px-3 inline-flex items-center rounded-md border border-sky-300 bg-white text-sky-700 text-xs font-medium hover:bg-sky-100 transition-colors">
-                            Sincronizar + reporte
-                        </a>
-                    </div>
-                </div>
             @endif
 
             @if ($syncReport)
@@ -1075,7 +1071,6 @@
                     <div class="manage-main">
                         <aside class="pane pane-split manage-left p-3">
                             <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                                <div class="text-[11px] uppercase tracking-wide text-gray-500">Seccion</div>
                                 <div class="text-sm font-semibold text-gray-800">Grupos de requisitos (01-05)</div>
                             </div>
                             <div class="pane-body px-1 py-1 space-y-3">
@@ -1123,7 +1118,6 @@
                         <section class="manage-right">
                             <div class="pane pane-split p-3">
                                 <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                                    <div class="text-[11px] uppercase tracking-wide text-gray-500">Seccion</div>
                                     <div class="text-sm font-semibold text-gray-800">Requisitos del subgrupo activo</div>
                                 </div>
                                 <div class="pane-body">
@@ -1161,7 +1155,6 @@
 
                             <div class="pane pane-split p-3">
                                 <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                                    <div class="text-[11px] uppercase tracking-wide text-gray-500">Seccion</div>
                                     <div class="text-sm font-semibold text-gray-800">Detalle del requisito activo</div>
                                 </div>
                                 <div class="pane-body">
@@ -1171,8 +1164,32 @@
                                         </template>
 
                                         <template x-if="currentRequirement()">
-                                            <div class="space-y-4">
+                                            <div class="space-y-3">
                                                 <div class="text-sm font-semibold text-gray-800" x-text="currentDisplayName(currentRequirement())"></div>
+                                                <form method="POST"
+                                                    enctype="multipart/form-data"
+                                                    action="{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}"
+                                                    x-bind:action="currentRequirement() ? currentRequirement().upload_url : '{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}'"
+                                                    @submit.prevent="uploadCurrentRequirement($event)"
+                                                    class="space-y-3 rounded-lg border-2 border-emerald-200 bg-emerald-50/70 p-3">
+                                                    @csrf
+                                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                                                        <div class="sm:col-span-2">
+                                                            <input type="file" name="archivos[]" multiple class="block w-full rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
+                                                        </div>
+                                                        <div>
+                                                        <button
+                                                            type="submit"
+                                                            class="w-full h-10 rounded-md text-sm font-semibold shadow-sm border border-gray-400 text-gray-900 ring-1 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                                                            :class="uploadButtonClass()"
+                                                            :disabled="uploadBusy"
+                                                            >
+                                                            <span x-text="uploadBusy ? 'Subiendo...' : 'Subir evidencia'"></span>
+                                                        </button>
+                                                        </div>
+                                                    </div>
+                                                </form>
+
                                                 <div>
                                                     <span
                                                         class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium"
@@ -1230,28 +1247,6 @@
                                                         Ver historial
                                                     </button>
                                                 </div>
-
-                                                <form method="POST"
-                                                    enctype="multipart/form-data"
-                                                    action="{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}"
-                                                    x-bind:action="currentRequirement() ? currentRequirement().upload_url : '{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}'"
-                                                    @submit.prevent="uploadCurrentRequirement($event)"
-                                                    class="space-y-3 pt-1">
-                                                    @csrf
-                                                    <div>
-                                                        <label class="text-xs font-medium text-gray-600">Cargar evidencias</label>
-                                                        <input type="file" name="archivos[]" multiple class="mt-1 block w-full text-xs text-gray-700">
-                                                    </div>
-                                                    <div class="sticky bottom-0 pt-2">
-                                                        <button
-                                                            type="submit"
-                                                            class="w-full h-9 rounded-md text-xs font-medium shadow-sm border disabled:opacity-60 disabled:cursor-not-allowed"
-                                                            :disabled="uploadBusy"
-                                                            style="background:#4f46e5;color:#ffffff;border-color:#4338ca;">
-                                                            <span x-text="uploadBusy ? 'Subiendo...' : 'Enviar'"></span>
-                                                        </button>
-                                                    </div>
-                                                </form>
                                             </div>
                                         </template>
                                     </div>
@@ -1397,5 +1392,19 @@
                     Abrir modulo
                 </a>
             </div>
+
+            @if ($driveConnected && $driveReady)
+                <div class="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-sky-700 text-sm flex items-center justify-between gap-2">
+                    <span class="font-medium">Drive conectado.</span>
+                    <div class="flex items-center gap-2">
+                        <a href="{{ route('filament.admin.resources.projects.manage', ['record' => $project]) }}?sync=1" class="h-8 px-3 inline-flex items-center rounded-md border border-sky-300 bg-white text-sky-700 text-xs font-medium hover:bg-sky-100 transition-colors">
+                            Sincronizar ahora
+                        </a>
+                        <a href="{{ route('filament.admin.resources.projects.manage', ['record' => $project]) }}?sync=1&debug=1" class="h-8 px-3 inline-flex items-center rounded-md border border-sky-300 bg-white text-sky-700 text-xs font-medium hover:bg-sky-100 transition-colors">
+                            Sincronizar + reporte
+                        </a>
+                    </div>
+                </div>
+            @endif
         </div>
     </div>

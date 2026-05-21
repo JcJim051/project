@@ -33,11 +33,15 @@ class DriveOAuthSettings extends Page implements HasForms
     protected static string $view = 'filament.pages.drive-oauth-settings';
 
     public ?array $data = [];
+    public bool $isDriveConfigured = false;
+    public bool $isDriveConnected = false;
+    public ?string $tokenUpdatedAt = null;
 
     public function mount(GoogleDriveService $driveService): void
     {
         $setting = DriveOAuthSetting::query()->latest('id')->first();
         $active = $driveService->oauthCredentials();
+        $this->refreshDriveStatus($driveService);
 
         $this->form->fill([
             'client_id' => $active['client_id'] ?? ($setting?->client_id ?? ''),
@@ -86,6 +90,8 @@ class DriveOAuthSettings extends Page implements HasForms
             ->body('Se guardaron las credenciales OAuth y se limpiaron tokens previos.')
             ->success()
             ->send();
+
+        $this->refreshDriveStatus($driveService);
     }
 
     protected function getHeaderActions(): array
@@ -106,6 +112,15 @@ class DriveOAuthSettings extends Page implements HasForms
                 $disk->delete($file);
             }
         }
+    }
+
+    private function refreshDriveStatus(GoogleDriveService $driveService): void
+    {
+        $this->isDriveConfigured = $driveService->isConfigured();
+        $this->isDriveConnected = $driveService->isAuthorized(auth()->id());
+
+        $tokenPath = storage_path('app/google-drive-token-' . auth()->id() . '.json');
+        $this->tokenUpdatedAt = is_file($tokenPath) ? date('Y-m-d H:i:s', (int) filemtime($tokenPath)) : null;
     }
 
     public static function canAccess(): bool

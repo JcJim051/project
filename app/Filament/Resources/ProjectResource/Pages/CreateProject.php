@@ -4,7 +4,9 @@ namespace App\Filament\Resources\ProjectResource\Pages;
 
 use App\Filament\Resources\ProjectResource;
 use App\Models\Municipio;
+use App\Services\GoogleDriveService;
 use App\Services\ProjectBankExcelService;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 
 class CreateProject extends CreateRecord
@@ -14,10 +16,17 @@ class CreateProject extends CreateRecord
     protected array $secondarySectorIds = [];
     protected array $municipioIds = [];
     protected array $bankProfileData = [];
+    protected ?string $driveSetupWarning = null;
 
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        $data['drive_folder_id'] = ProjectResource::extractDriveFolderId($data['ruta_drive'] ?? null);
+        $driveMode = (string) ($data['drive_setup_mode'] ?? 'auto');
+        if ($driveMode === 'manual') {
+            $data['drive_folder_id'] = ProjectResource::extractDriveFolderId($data['ruta_drive'] ?? null);
+        } else {
+            $data = $this->createDriveStructureForProject($data);
+        }
+
         $this->validatePrimaryAndSecondary($data);
         $this->validateProductBelongsToPrimarySector($data);
         $this->primarySectorId = (int) ($data['sector_principal_id'] ?? 0);
@@ -75,6 +84,7 @@ class CreateProject extends CreateRecord
             $data['observaciones'],
             $data['sector_texto_plantilla']
         );
+        unset($data['drive_setup_mode']);
 
         return $data;
     }
@@ -87,6 +97,14 @@ class CreateProject extends CreateRecord
         $service = app(ProjectBankExcelService::class);
         $service->ensureSeeded($this->record);
         $service->saveProfile($this->record, $this->bankProfileData);
+
+        if ($this->driveSetupWarning) {
+            Notification::make()
+                ->title('Proyecto creado con observación de Drive')
+                ->body($this->driveSetupWarning)
+                ->warning()
+                ->send();
+        }
     }
 
 
@@ -152,5 +170,34 @@ class CreateProject extends CreateRecord
             ->orderBy('nombre')
             ->pluck('nombre')
             ->implode(', ');
+    }
+
+    private function createDriveStructureForProject(array $data): array
+    {
+        /** @var GoogleDriveService $drive */
+        $drive = app(GoogleDriveService::class);
+        $userId = auth()->id();
+
+        $projectFolderName = trim((string) ($data['id_proyecto'] ?? '')) . ' - ' . trim((string) ($data['nombre'] ?? ''));
+        if (!$drive->isAuthorized($userId)) {
+            $data['drive_folder_id'] = null;
+            $data['ruta_drive'] = null;
+            $this->driveSetupWarning = 'No se creó la carpeta automática porque no hay conexión activa con Drive. Puedes conectarlo luego y sincronizar.';
+            return $data;
+        }
+
+        try {
+            $created = $drive->createProjectBaseStructure(trim($projectFolderName, ' -'), $userId);
+        } catch (\Throwable $e) {
+            $data['drive_folder_id'] = null;
+            $data['ruta_drive'] = null;
+            $this->driveSetupWarning = 'No se pudo crear la estructura base en Drive: ' . $e->getMessage() . '. El proyecto se creó sin carpeta vinculada.';
+            return $data;
+        }
+
+        $data['drive_folder_id'] = (string) ($created['id'] ?? '');
+        $data['ruta_drive'] = (string) ($created['url'] ?? '');
+
+        return $data;
     }
 }

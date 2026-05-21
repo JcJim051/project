@@ -52,6 +52,10 @@ class GoogleDriveService
     {
         $client = $this->client($userId);
         $token = $client->fetchAccessTokenWithAuthCode($authCode);
+        if (isset($token['error'])) {
+            $description = (string) ($token['error_description'] ?? $token['error']);
+            throw new \RuntimeException('OAuth Google rechazó el código: ' . $description);
+        }
         $this->storeToken($token, $userId);
     }
 
@@ -430,6 +434,81 @@ class GoogleDriveService
             'name' => $created->name ?? $fileName,
             'mimeType' => $created->mimeType ?? $mimeType,
             'modifiedTime' => $created->modifiedTime ?? null,
+        ];
+    }
+
+    public function createProjectBaseStructure(
+        string $projectName,
+        ?int $userId = null,
+        ?string $parentFolderId = null,
+        ?array $subfolders = null
+    ): array {
+        $name = trim($projectName);
+        if ($name === '') {
+            throw new \InvalidArgumentException('El nombre del proyecto para Drive no puede estar vacío.');
+        }
+
+        $parentFolderId = $parentFolderId ?: (string) config('services.google.projects_root_folder_id', '');
+        $baseFolders = $subfolders ?: (array) config('services.google.project_base_folders', [
+            '01 Estructuracion',
+            '02 Cargue',
+        ]);
+        $structuringFolders = (array) config('services.google.project_structuring_folders', [
+            '01 Formulacion',
+            '02 Presupuesto',
+            '03 Certificaciones',
+            '04 Licencias y Permisos',
+            '05 Estudios y Diseños',
+        ]);
+
+        $drive = $this->drive($userId);
+        $payload = [
+            'name' => $name,
+            'mimeType' => 'application/vnd.google-apps.folder',
+        ];
+        if ($parentFolderId !== '') {
+            $payload['parents'] = [$parentFolderId];
+        }
+
+        $root = $drive->files->create(new DriveFile($payload), ['fields' => 'id,name,webViewLink']);
+        $rootId = (string) ($root->id ?? '');
+        if ($rootId === '') {
+            throw new \RuntimeException('No se pudo crear la carpeta raíz del proyecto en Drive.');
+        }
+
+        $createdSubfolders = [];
+        $createdFoldersByName = [];
+        foreach (collect($baseFolders)->map(fn ($item) => trim((string) $item))->filter()->unique()->values() as $folder) {
+            $createdId = $this->createChildFolder($rootId, $folder, $userId);
+            if (!$createdId) {
+                throw new \RuntimeException("No se pudo crear la subcarpeta base '{$folder}' en Drive.");
+            }
+            $createdSubfolders[] = [
+                'id' => $createdId,
+                'name' => $folder,
+            ];
+            $createdFoldersByName[$folder] = $createdId;
+        }
+
+        $structuringFolderId = $createdFoldersByName['01 Estructuracion'] ?? null;
+        if ($structuringFolderId) {
+            foreach (collect($structuringFolders)->map(fn ($item) => trim((string) $item))->filter()->unique()->values() as $folder) {
+                $createdId = $this->createChildFolder($structuringFolderId, $folder, $userId);
+                if (!$createdId) {
+                    throw new \RuntimeException("No se pudo crear la subcarpeta de estructuración '{$folder}' en Drive.");
+                }
+                $createdSubfolders[] = [
+                    'id' => $createdId,
+                    'name' => '01 Estructuracion/' . $folder,
+                ];
+            }
+        }
+
+        return [
+            'id' => $rootId,
+            'name' => (string) ($root->name ?? $name),
+            'url' => 'https://drive.google.com/drive/folders/' . $rootId,
+            'created_subfolders' => $createdSubfolders,
         ];
     }
 
