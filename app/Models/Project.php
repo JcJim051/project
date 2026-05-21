@@ -15,6 +15,8 @@ class Project extends Model
         'id_proyecto',
         'bipin',
         'funding_source',
+        'valor',
+        'producto_id',
         'nombre_clave',
         'municipio',
         'secretaria',
@@ -27,12 +29,32 @@ class Project extends Model
 
     protected $casts = [
         'fecha_creacion' => 'date',
+        'valor' => 'decimal:2',
     ];
+
+    public function producto()
+    {
+        return $this->belongsTo(Producto::class);
+    }
 
     public function sectores()
     {
         return $this->belongsToMany(Sector::class, 'project_sector')
             ->withPivot('is_primary');
+    }
+
+    public function municipios()
+    {
+        return $this->belongsToMany(Municipio::class, 'municipio_project');
+    }
+
+    public function getMunicipiosDisplayAttribute(): string
+    {
+        if ($this->relationLoaded('municipios') && $this->municipios->isNotEmpty()) {
+            return $this->municipios->pluck('nombre')->implode(', ');
+        }
+
+        return (string) $this->municipio;
     }
 
     public function formulador()
@@ -58,5 +80,25 @@ class Project extends Model
     public function attachmentPackageRuns()
     {
         return $this->hasMany(AttachmentPackageRun::class);
+    }
+
+    public function bankProfile()
+    {
+        return $this->hasOne(ProjectBankProfile::class);
+    }
+
+    public function bankSignatories()
+    {
+        return $this->hasMany(ProjectBankSignatory::class)->orderBy('orden');
+    }
+
+    public function bankFinancingRows()
+    {
+        return $this->hasMany(ProjectBankFinancingRow::class)->orderBy('orden');
+    }
+
+    public function bankActivityRows()
+    {
+        return $this->hasMany(ProjectBankActivityRow::class)->orderBy('orden');
     }
 }

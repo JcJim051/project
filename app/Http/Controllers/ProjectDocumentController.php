@@ -97,7 +97,7 @@ class ProjectDocumentController extends Controller
             : (string) ($project->id_proyecto ?? '');
 
         $processor->setValue('OBJETO', $project->objeto_proyecto ?? '');
-        $processor->setValue('BIPIN', $referenceCode);
+        $processor->setValue('BPIN', $referenceCode);
         $processor->setValue('BPIN', $referenceCode);
         $processor->setValue('ID_PROYECTO', (string) ($project->id_proyecto ?? ''));
         $processor->setValue('FUENTE_RECURSOS', strtoupper($fundingSource));
@@ -226,7 +226,12 @@ class ProjectDocumentController extends Controller
             return [$this->normalizeName($name) => true];
         });
 
-        return DocumentTemplate::orderBy('nombre')
+        return DocumentTemplate::query()
+            ->where(function ($query) {
+                $query->whereNull('file_kind')
+                    ->orWhere('file_kind', 'docx');
+            })
+            ->orderBy('nombre')
             ->get()
             ->filter(function ($template) use ($reqNames) {
                 return $reqNames->has($this->normalizeName($template->nombre));

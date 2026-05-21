@@ -27,6 +27,10 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('panel')
+            ->brandName('Gestion de proyectos')
+            ->brandLogo(fn () => view('filament.brand'))
+            ->brandLogoHeight('2rem')
+            ->favicon(asset('favicon.png'))
             ->login()
             ->colors([
                 'primary' => [

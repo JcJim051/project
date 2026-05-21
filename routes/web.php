@@ -9,6 +9,7 @@ use App\Http\Controllers\DriveAuthController;
 use App\Http\Controllers\DriveSettingsController;
 use App\Http\Controllers\ProjectDocumentController;
 use App\Http\Controllers\ProjectDriveEvidenceController;
+use App\Http\Controllers\ProjectBankController;
 use App\Http\Controllers\AttachmentPackageRunController;
 use Illuminate\Support\Facades\Route;
 
@@ -58,6 +59,12 @@ Route::middleware([
     Route::get('/projects/{project}/documents', [ProjectDocumentController::class, 'index'])->name('projects.documents');
     Route::get('/projects/{project}/documents/{documentTemplate}', [ProjectDocumentController::class, 'download'])->name('projects.documents.download');
     Route::post('/projects/{project}/documents/zip', [ProjectDocumentController::class, 'downloadZip'])->name('projects.documents.zip');
+    Route::put('/projects/{project}/bank/profile', [ProjectBankController::class, 'updateProfile'])->name('projects.bank.profile.update');
+    Route::put('/projects/{project}/bank/signatories', [ProjectBankController::class, 'updateSignatories'])->name('projects.bank.signatories.update');
+    Route::put('/projects/{project}/bank/financing', [ProjectBankController::class, 'updateFinancingRows'])->name('projects.bank.financing.update');
+    Route::put('/projects/{project}/bank/activities', [ProjectBankController::class, 'updateActivityRows'])->name('projects.bank.activities.update');
+    Route::get('/projects/{project}/bank/download/{templateType}', [ProjectBankController::class, 'downloadExcel'])->name('projects.bank.download.excel');
+    Route::get('/projects/{project}/bank/download-zip', [ProjectBankController::class, 'downloadZip'])->name('projects.bank.download.zip');
 
     Route::get('/drive/settings', fn () => redirect('/panel/drive-oauth-settings'))->name('drive.settings.edit');
     Route::put('/drive/settings', [DriveSettingsController::class, 'update'])->name('drive.settings.update');

@@ -25,7 +25,7 @@
                 <div>
                     <h3 class="text-lg font-semibold text-gray-800">Subir plantillas</h3>
                     <p class="text-sm text-gray-500">
-                        Usa marcadores en el Word: @verbatim{{OBJETO}}@endverbatim, @verbatim{{BIPIN}}@endverbatim, @verbatim{{FORMULADOR}}@endverbatim, @verbatim{{FECHA}}@endverbatim.
+                        Usa marcadores en el Word: @verbatim{{OBJETO}}@endverbatim, @verbatim{{BPIN}}@endverbatim, @verbatim{{FORMULADOR}}@endverbatim, @verbatim{{FECHA}}@endverbatim.
                     </p>
                 </div>
                 <form method="POST" action="{{ route('document_templates.store') }}" enctype="multipart/form-data" class="grid gap-3 sm:grid-cols-3 sm:items-end">

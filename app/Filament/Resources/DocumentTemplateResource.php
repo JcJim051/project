@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\DocumentTemplateResource\Pages;
 use App\Models\DocumentTemplate;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -37,27 +38,52 @@ class DocumentTemplateResource extends Resource
                     ->required()
                     ->maxLength(255)
                     ->unique(ignoreRecord: true),
+                Select::make('file_kind')
+                    ->label('Tipo de archivo')
+                    ->options([
+                        'docx' => 'DOCX',
+                        'xlsx' => 'XLSX',
+                    ])
+                    ->default('docx')
+                    ->required()
+                    ->native(false),
+                Select::make('template_type')
+                    ->label('Tipo de plantilla')
+                    ->options([
+                        'docx_general' => 'DOCX General',
+                        'bank_plan_inversion' => 'Banco F-PE-23',
+                        'bank_plan_desarrollo' => 'Banco F-PE-24',
+                        'bank_cronograma' => 'Banco F-PE-25',
+                    ])
+                    ->default('docx_general')
+                    ->required()
+                    ->native(false),
                 FileUpload::make('ruta_archivo')
-                    ->label('Archivo DOCX')
+                    ->label('Archivo')
                     ->required()
                     ->acceptedFileTypes([
                         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     ])
                     ->directory('document_templates')
                     ->disk('local')
                     ->preserveFilenames()
                     ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file): string {
                         $base = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+                        $ext = strtolower((string) $file->getClientOriginalExtension());
+                        if (! in_array($ext, ['docx', 'xlsx'], true)) {
+                            $ext = 'docx';
+                        }
                         $safe = Str::slug((string) $base, '_');
                         if ($safe === '') {
                             $safe = 'plantilla_' . Str::lower(Str::random(8));
                         }
 
-                        return $safe . '.docx';
+                        return $safe . '.' . $ext;
                     })
                     ->downloadable()
                     ->openable()
-                    ->helperText('Solo .docx. Usa marcadores como {{OBJETO}}, {{BIPIN}}, {{FORMULADOR}}, {{FECHA}}.'),
+                    ->helperText('DOCX o XLSX. DOCX usa marcadores como {{OBJETO}}, {{BPIN}}, {{FORMULADOR}}, {{FECHA}}.'),
             ]);
     }
 
@@ -69,6 +95,12 @@ class DocumentTemplateResource extends Resource
                     ->label('Nombre')
                     ->searchable()
                     ->sortable(),
+                TextColumn::make('template_type')
+                    ->label('Tipo plantilla')
+                    ->badge(),
+                TextColumn::make('file_kind')
+                    ->label('Tipo archivo')
+                    ->badge(),
                 TextColumn::make('ruta_archivo')
                     ->label('Archivo')
                     ->limit(55),

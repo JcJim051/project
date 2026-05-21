@@ -41,6 +41,18 @@
                     }
                     $regularGroups = $requirements->except(array_keys($certGroups));
 
+                    $formulationGroups = [];
+                    foreach ($regularGroups as $folderKey => $groups) {
+                        $normalized = \Illuminate\Support\Str::lower(\Illuminate\Support\Str::ascii((string) $folderKey));
+                        if ($folderKey === '01 Formulacion'
+                            || preg_match('/^0?1($|\.|\s)/', (string) $folderKey)
+                            || str_contains($normalized, 'formulacion')
+                        ) {
+                            $formulationGroups[$folderKey] = $groups;
+                        }
+                    }
+                    $regularGroups = $regularGroups->except(array_keys($formulationGroups));
+
                     $budgetGroups = [];
                     foreach ($regularGroups as $folderKey => $groups) {
                         if (preg_match('/^2\./', (string) $folderKey) || $folderKey === '02 Presupuesto') {
@@ -86,6 +98,9 @@
                     $regularGroups = $regularGroups->except(array_keys($studiesGroups));
 
                     $sections = [];
+                    if (!empty($formulationGroups)) {
+                        $sections[] = ['type' => 'formulation', 'name' => '01 Formulación', 'order' => 1];
+                    }
                     if (!empty($budgetGroups)) {
                         $sections[] = ['type' => 'budget', 'name' => '02 Presupuesto', 'order' => 2];
                     }
@@ -111,7 +126,113 @@
                 @endphp
 
                 @foreach ($sections as $section)
-                    @if ($section['type'] === 'budget')
+                    @if ($section['type'] === 'formulation')
+                        <details class="rounded-lg border border-gray-200 bg-white">
+                            <summary class="cursor-pointer list-none border-b border-gray-100 p-4 flex items-center justify-between">
+                                <div class="text-base font-semibold text-gray-800">01 Formulación</div>
+                            </summary>
+                            <div class="p-4 space-y-3">
+                                @php
+                                    $formulationBuckets = [
+                                        'general' => ['title' => 'Requisitos Generales', 'groups' => []],
+                                        'bank' => ['title' => 'Documentos del Banco', 'groups' => []],
+                                        'support' => ['title' => 'Otros Soportes', 'groups' => []],
+                                        'strategic' => ['title' => 'Proyecto Estrategico', 'groups' => []],
+                                    ];
+
+                                    foreach ($formulationGroups as $carpeta => $groups) {
+                                        foreach ($groups as $group) {
+                                            $probe = $group['parent'] ?? ($group['children'][0] ?? null);
+                                            $code = trim((string) ($probe->codigo_interno ?? $probe->orden ?? ''));
+                                            $bucketKey = 'support';
+
+                                            if (preg_match('/^1\.06(\b|\s|\.|$)/', $code)) {
+                                                $bucketKey = 'bank';
+                                            } elseif (preg_match('/^1\.13(\b|\s|\.|$)/', $code)) {
+                                                $bucketKey = 'strategic';
+                                            } elseif (preg_match('/^1\.0[1-5](\b|\s|\.|$)/', $code)) {
+                                                $bucketKey = 'general';
+                                            } elseif (preg_match('/^1\.(0[7-9]|1[0-2])(\b|\s|\.|$)/', $code)) {
+                                                $bucketKey = 'support';
+                                            }
+
+                                            $formulationBuckets[$bucketKey]['groups'][] = $group;
+                                        }
+                                    }
+                                @endphp
+
+                                @foreach ($formulationBuckets as $bucket)
+                                    @continue(empty($bucket['groups']))
+                                    @php
+                                        $bucketTotal = 0;
+                                        $bucketActive = 0;
+                                        foreach ($bucket['groups'] as $tmpGroup) {
+                                            $items = collect();
+                                            if (!empty($tmpGroup['parent'])) {
+                                                $items->push($tmpGroup['parent']);
+                                            }
+                                            foreach (($tmpGroup['children'] ?? []) as $child) {
+                                                $items->push($child);
+                                            }
+                                            foreach ($items as $item) {
+                                                if (strtoupper((string) $item->requiere_check) === 'SI') {
+                                                    $bucketTotal++;
+                                                    if (in_array($item->id, $applied, true)) {
+                                                        $bucketActive++;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        $activeClass = $bucketActive > 0 ? 'text-emerald-600 font-semibold' : 'text-gray-500';
+                                    @endphp
+                                    <details class="border border-gray-100 rounded-md">
+                                        <summary class="cursor-pointer list-none border-b border-gray-100 p-3 flex items-center justify-between">
+                                            <div class="text-sm font-semibold text-gray-800">{{ $bucket['title'] }}</div>
+                                            <div class="text-xs text-gray-500">
+                                                <span class="{{ $activeClass }}">{{ $bucketActive }}</span> / <span>{{ $bucketTotal }}</span>
+                                            </div>
+                                        </summary>
+                                        <div class="p-3 space-y-3">
+                                            @foreach ($bucket['groups'] as $group)
+                                                @php
+                                                    $parent = $group['parent'] ?? null;
+                                                    $children = $group['children'] ?? [];
+                                                @endphp
+                                                <div class="space-y-2">
+                                                    @if ($parent)
+                                                        <label class="flex items-start gap-3 text-sm text-gray-700">
+                                                            @if (strtoupper((string) $parent->requiere_check) === 'SI')
+                                                                <input type="checkbox" name="aplica[]" value="{{ $parent->id }}" class="mt-1 rounded border-gray-300" {{ in_array($parent->id, $applied) ? 'checked' : '' }}>
+                                                            @endif
+                                                            <div>
+                                                                <div class="font-medium">{{ $parent->texto ?: $parent->requisito }}</div>
+                                                                <div class="text-xs text-gray-500">Documento: {{ $parent->nombre_documento }}{{ $parent->codigo_interno ? ' | Código: ' . $parent->codigo_interno : '' }}</div>
+                                                            </div>
+                                                        </label>
+                                                    @endif
+                                                    @if (!empty($children))
+                                                        <div class="pl-6 border-l border-gray-100 space-y-2">
+                                                            @foreach ($children as $child)
+                                                                <label class="flex items-start gap-3 text-sm text-gray-700">
+                                                                    @if (strtoupper((string) $child->requiere_check) === 'SI')
+                                                                        <input type="checkbox" name="aplica[]" value="{{ $child->id }}" class="mt-1 rounded border-gray-300" {{ in_array($child->id, $applied) ? 'checked' : '' }}>
+                                                                    @endif
+                                                                    <div>
+                                                                        <div class="font-medium">{{ $child->texto ?: $child->requisito }}</div>
+                                                                        <div class="text-xs text-gray-500">Documento: {{ $child->nombre_documento }}{{ $child->codigo_interno ? ' | Código: ' . $child->codigo_interno : '' }}</div>
+                                                                    </div>
+                                                                </label>
+                                                            @endforeach
+                                                        </div>
+                                                    @endif
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    </details>
+                                @endforeach
+                            </div>
+                        </details>
+                    @elseif ($section['type'] === 'budget')
                         <details class="rounded-lg border border-gray-200 bg-white">
                             <summary class="cursor-pointer list-none border-b border-gray-100 p-4 flex items-center justify-between">
                                 <div class="text-base font-semibold text-gray-800">02 Presupuesto</div>

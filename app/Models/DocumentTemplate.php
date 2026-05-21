@@ -12,6 +12,8 @@ class DocumentTemplate extends Model
 
     protected $fillable = [
         'nombre',
+        'template_type',
+        'file_kind',
         'ruta_archivo',
     ];
 

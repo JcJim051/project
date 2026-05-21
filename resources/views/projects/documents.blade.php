@@ -38,8 +38,8 @@
                     <div class="mt-1 text-sm font-semibold text-gray-800">{{ $project->objeto_proyecto }}</div>
                 </div>
                 <div>
-                    <div class="text-xs font-medium uppercase tracking-wide text-gray-500">BIPIN</div>
-                    <div class="mt-1 text-sm font-semibold text-gray-800">{{ $project->bipin ?: 'Sin BIPIN' }}</div>
+                    <div class="text-xs font-medium uppercase tracking-wide text-gray-500">BPIN</div>
+                    <div class="mt-1 text-sm font-semibold text-gray-800">{{ $project->bipin ?: 'Sin BPIN' }}</div>
                 </div>
                 <div>
                     <div class="text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</div>

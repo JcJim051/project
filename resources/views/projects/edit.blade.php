@@ -32,7 +32,7 @@
                             @error('id_proyecto')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700">BIPIN</label>
+                            <label class="block text-sm font-medium text-gray-700">BPIN</label>
                             <input name="bipin" value="{{ old('bipin', $project->bipin) }}" class="mt-1 w-full rounded-md border-gray-300" />
                             @error('bipin')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
                         </div>
@@ -53,13 +53,22 @@
                             <input name="nombre_clave" value="{{ old('nombre_clave', $project->nombre_clave) }}" class="mt-1 w-full rounded-md border-gray-300" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700">Municipio</label>
-                            <input name="municipio" value="{{ old('municipio', $project->municipio) }}" class="mt-1 w-full rounded-md border-gray-300" required />
-                            @error('municipio')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
+                            <label class="block text-sm font-medium text-gray-700">Municipios</label>
+                            <select name="municipio_ids[]" multiple class="mt-1 w-full rounded-md border-gray-300 h-40" required>
+                                @foreach ($municipios as $municipio)
+                                    <option value="{{ $municipio->id }}" {{ in_array($municipio->id, old('municipio_ids', $municipioIds ?? [])) ? 'selected' : '' }}>{{ $municipio->nombre }}</option>
+                                @endforeach
+                            </select>
+                            @error('municipio_ids')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Secretaría</label>
-                            <input name="secretaria" value="{{ old('secretaria', $project->secretaria) }}" class="mt-1 w-full rounded-md border-gray-300" />
+                            <select name="secretaria" class="mt-1 w-full rounded-md border-gray-300">
+                                <option value="">Selecciona...</option>
+                                @foreach ($secretarias as $secretaria)
+                                    <option value="{{ $secretaria->nombre }}" {{ old('secretaria', $project->secretaria) === $secretaria->nombre ? 'selected' : '' }}>{{ $secretaria->nombre }}</option>
+                                @endforeach
+                            </select>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Fecha de creación</label>
@@ -82,7 +91,7 @@
                                 <select name="sector_principal_id" class="mt-1 w-full rounded-md border-gray-300" required>
                                     <option value="">Selecciona...</option>
                                     @foreach ($sectors as $sector)
-                                        <option value="{{ $sector->id }}" {{ (int) old('sector_principal_id', $principalSectorId ?? 0) === (int) $sector->id ? 'selected' : '' }}>{{ $sector->nombre }}</option>
+                                        <option value="{{ $sector->id }}" {{ (int) old('sector_principal_id', $principalSectorId ?? 0) === (int) $sector->id ? 'selected' : '' }}>{{ $sector->nombre_con_codigo }}</option>
                                     @endforeach
                                 </select>
                                 @error('sector_principal_id')<p class="text-sm text-red-600">{{ $message }}</p>@enderror
@@ -91,7 +100,7 @@
                                 <label class="block text-sm font-medium text-gray-700">Sectores secundarios</label>
                                 <select name="sectores_secundarios[]" multiple class="mt-1 w-full rounded-md border-gray-300 h-40">
                                     @foreach ($sectors as $sector)
-                                        <option value="{{ $sector->id }}" {{ in_array($sector->id, old('sectores_secundarios', $secondarySectorIds ?? [])) ? 'selected' : '' }}>{{ $sector->nombre }}</option>
+                                        <option value="{{ $sector->id }}" {{ in_array($sector->id, old('sectores_secundarios', $secondarySectorIds ?? [])) ? 'selected' : '' }}>{{ $sector->nombre_con_codigo }}</option>
                                     @endforeach
                                 </select>
                                 @error('sectores_secundarios')<p class="text-sm text-red-600">{{ $message }}</p>@enderror

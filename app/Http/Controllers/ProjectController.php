@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Municipio;
+use App\Models\Producto;
 use App\Models\Project;
 use App\Models\Requirement;
 use App\Models\RequirementEvidence;
+use App\Models\Secretaria;
 use App\Models\Sector;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -15,7 +18,7 @@ class ProjectController extends Controller
 {
     public function index()
     {
-        $projects = Project::with(['sectores', 'formulador', 'estructurador'])
+        $projects = Project::with(['sectores', 'municipios', 'producto', 'formulador', 'estructurador'])
             ->withCount('requisitos')
             ->orderByDesc('created_at')
             ->get();
@@ -81,11 +84,13 @@ class ProjectController extends Controller
 
     public function create()
     {
-        $this->ensureSectorsFromRequirements();
-        $sectors = Sector::orderBy('nombre')->get();
+        $sectors = Sector::query()->where('activo', true)->orderBy('codigo')->orderBy('nombre')->get();
+        $secretarias = Secretaria::query()->where('activo', true)->orderBy('nombre')->get();
+        $municipios = Municipio::query()->where('activo', true)->orderBy('nombre')->get();
         $users = User::orderBy('name')->get();
+        $productos = Producto::query()->where('activo', true)->orderBy('codigo')->orderBy('nombre')->get();
 
-        return view('projects.create', compact('sectors', 'users'));
+        return view('projects.create', compact('sectors', 'secretarias', 'municipios', 'users', 'productos'));
     }
 
     public function store(Request $request)
@@ -102,18 +107,22 @@ class ProjectController extends Controller
             $data['drive_folder_id'] = $driveId;
         }
 
+        $data['municipio'] = $this->municipioNames($data['municipio_ids'] ?? []);
         $project = Project::create($data);
         $this->syncProjectSectors($project, $data);
+        $this->syncProjectMunicipios($project, $data);
 
         return redirect()->route('projects.index')->with('status', 'Proyecto creado correctamente.');
     }
 
     public function edit(Project $project)
     {
-        $project->load('sectores');
-        $this->ensureSectorsFromRequirements();
-        $sectors = Sector::orderBy('nombre')->get();
+        $project->load(['sectores', 'municipios']);
+        $sectors = Sector::query()->where('activo', true)->orderBy('codigo')->orderBy('nombre')->get();
+        $secretarias = Secretaria::query()->where('activo', true)->orderBy('nombre')->get();
+        $municipios = Municipio::query()->where('activo', true)->orderBy('nombre')->get();
         $users = User::orderBy('name')->get();
+        $productos = Producto::query()->where('activo', true)->orderBy('codigo')->orderBy('nombre')->get();
 
         $principalSectorId = optional($project->sectores->first(fn ($sector) => (bool) ($sector->pivot->is_primary ?? false)))->id;
         $secondarySectorIds = $project->sectores
@@ -122,7 +131,9 @@ class ProjectController extends Controller
             ->values()
             ->all();
 
-        return view('projects.edit', compact('project', 'sectors', 'users', 'principalSectorId', 'secondarySectorIds'));
+        $municipioIds = $project->municipios->pluck('id')->values()->all();
+
+        return view('projects.edit', compact('project', 'sectors', 'secretarias', 'municipios', 'users', 'productos', 'principalSectorId', 'secondarySectorIds', 'municipioIds'));
     }
 
     public function update(Request $request, Project $project)
@@ -141,8 +152,10 @@ class ProjectController extends Controller
             $data['drive_folder_id'] = null;
         }
 
+        $data['municipio'] = $this->municipioNames($data['municipio_ids'] ?? []);
         $project->update($data);
         $this->syncProjectSectors($project, $data);
+        $this->syncProjectMunicipios($project, $data);
 
         return redirect()->route('projects.index')->with('status', 'Proyecto actualizado correctamente.');
     }
@@ -159,9 +172,11 @@ class ProjectController extends Controller
             'objeto_proyecto' => ['required', 'string', 'max:500'],
             'id_proyecto' => ['required', 'string', 'max:100', $idProyectoUnique],
             'funding_source' => ['required', Rule::in(['sgr', 'propios'])],
+            'producto_id' => ['nullable', 'exists:productos,id'],
             'bipin' => ['nullable', 'string', 'max:100'],
             'nombre_clave' => ['nullable', 'string', 'max:255'],
-            'municipio' => ['required', 'string', 'max:255'],
+            'municipio_ids' => ['required', 'array', 'min:1'],
+            'municipio_ids.*' => ['exists:municipios,id'],
             'secretaria' => ['nullable', 'string', 'max:255'],
             'ruta_drive' => ['nullable', 'string', 'max:500'],
             'formulador_id' => ['nullable', 'exists:users,id'],
@@ -172,6 +187,8 @@ class ProjectController extends Controller
             'sectores_secundarios.*' => ['exists:sectors,id', 'different:sector_principal_id'],
         ], [
             'sector_principal_id.required' => 'Debes seleccionar un sector principal.',
+            'municipio_ids.required' => 'Debes seleccionar al menos un municipio.',
+            'municipio_ids.min' => 'Debes seleccionar al menos un municipio.',
         ]);
     }
 
@@ -186,6 +203,20 @@ class ProjectController extends Controller
                 'is_primary' => ((int) $sectorId === $primaryId),
             ]);
         }
+    }
+
+    private function syncProjectMunicipios(Project $project, array $data): void
+    {
+        $project->municipios()->sync(collect($data['municipio_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values()->all());
+    }
+
+    private function municipioNames(array $ids): string
+    {
+        return Municipio::query()
+            ->whereIn('id', $ids)
+            ->orderBy('nombre')
+            ->pluck('nombre')
+            ->implode(', ');
     }
 
     private function extractDriveFolderId(string $input): ?string
@@ -214,21 +245,5 @@ class ProjectController extends Controller
         return null;
     }
 
-    private function ensureSectorsFromRequirements(): void
-    {
-        $sectors = Requirement::query()
-            ->whereNotNull('sector')
-            ->where('sector', '!=', '')
-            ->distinct()
-            ->orderBy('sector')
-            ->pluck('sector');
 
-        foreach ($sectors as $name) {
-            $name = trim((string) $name);
-            if ($name === '') {
-                continue;
-            }
-            Sector::firstOrCreate(['nombre' => $name]);
-        }
-    }
 }

@@ -63,7 +63,7 @@
                                                     @click="openId = {{ $project->id }}">
                                                     {{ $project->nombre }}
                                                 </button>
-                                                <div class="text-xs text-gray-500">{{ $project->municipio }}</div>
+                                                <div class="text-xs text-gray-500">{{ $project->municipios_display }}</div>
                                             </td>
                                             <td class="py-4 pr-4 text-sm text-gray-600">{{ $sectores ?: 'Sin sector' }}</td>
                                             <td class="py-4 pr-4 text-sm text-gray-600">{{ $project->formulador->name ?? 'Sin asignar' }}</td>
@@ -126,7 +126,7 @@
                                             </div>
                                             <div class="rounded-md border border-gray-100 p-4">
                                                 <div class="text-xs uppercase text-gray-400">Municipio</div>
-                                                <div class="text-sm font-semibold text-gray-700">{{ $project->municipio }}</div>
+                                                <div class="text-sm font-semibold text-gray-700">{{ $project->municipios_display }}</div>
                                             </div>
                                             <div class="rounded-md border border-gray-100 p-4">
                                                 <div class="text-xs uppercase text-gray-400">Secretaría</div>
