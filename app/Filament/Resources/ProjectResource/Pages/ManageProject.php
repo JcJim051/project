@@ -53,7 +53,14 @@ class ManageProject extends Page
                 'topGroupProgress' => $data['topGroupProgress'] ?? null,
                 'attachmentRuns' => $data['attachmentRuns'] ?? null,
                 'attachmentPdfHealth' => $data['attachmentPdfHealth'] ?? null,
+                'attachmentsMinPercent' => $data['attachmentsMinPercent'] ?? 80,
                 'canGenerateAttachmentPackage' => $data['canGenerateAttachmentPackage'] ?? null,
+                'transferRequest' => $data['transferRequest'] ?? null,
+                'canTransferToMga' => $data['canTransferToMga'] ?? false,
+                'canRequestTransfer' => $data['canRequestTransfer'] ?? false,
+                'canAuthorizeTransfer' => $data['canAuthorizeTransfer'] ?? false,
+                'canAcknowledgeTransfer' => $data['canAcknowledgeTransfer'] ?? false,
+                'transferReceiptStates' => $data['transferReceiptStates'] ?? [],
             ];
         }
     }

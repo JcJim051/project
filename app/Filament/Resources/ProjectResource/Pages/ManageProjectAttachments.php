@@ -31,6 +31,7 @@ class ManageProjectAttachments extends Page
         $this->expireStaleRuns($project->id);
 
         $overallPercent = $this->overallPercent($project);
+        $attachmentsMinPercent = max(1, min(100, (int) ($project->attachments_min_percent ?? 80)));
         $attachmentRuns = AttachmentPackageRun::query()
             ->where('project_id', $project->id)
             ->latest('id')
@@ -40,7 +41,8 @@ class ManageProjectAttachments extends Page
         $this->viewData = [
             'project' => $project,
             'overallPercent' => $overallPercent,
-            'canGenerateAttachmentPackage' => $overallPercent === 100,
+            'attachmentsMinPercent' => $attachmentsMinPercent,
+            'canGenerateAttachmentPackage' => $overallPercent >= $attachmentsMinPercent,
             'attachmentRuns' => $attachmentRuns,
             'attachmentPdfHealth' => $this->buildAttachmentPdfHealth(),
             'hasActiveRuns' => $attachmentRuns->contains(fn (AttachmentPackageRun $run) => in_array($run->status, ['pending', 'running'], true)),

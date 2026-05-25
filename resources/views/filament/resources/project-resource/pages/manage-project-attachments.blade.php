@@ -5,7 +5,7 @@
                 <div>
                     <h3 class="text-sm font-semibold text-gray-800">Paquete PDF con adjuntos</h3>
                     <p class="text-xs text-gray-500">
-                        Disponible solo al 100%. Genera ZIP versionado (V{N}) y lo sube a Drive en 02 Cargue.
+                        Disponible desde {{ $attachmentsMinPercent }}%. Genera ZIP versionado (V{N}) y lo sube a Drive en 02 Cargue.
                     </p>
                     <p class="mt-1 text-xs text-gray-600">Avance actual del proyecto: <span class="font-semibold">{{ $overallPercent }}%</span></p>
                 </div>
@@ -22,7 +22,7 @@
             </div>
 
             @if (!$canGenerateAttachmentPackage)
-                <p class="mt-2 text-xs text-amber-700">Aun no se habilita: el proyecto debe estar al 100%.</p>
+                <p class="mt-2 text-xs text-amber-700">Aun no se habilita: el proyecto debe estar al {{ $attachmentsMinPercent }}%.</p>
             @endif
         </div>
 

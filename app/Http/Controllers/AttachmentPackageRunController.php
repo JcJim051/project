@@ -59,9 +59,10 @@ class AttachmentPackageRunController extends Controller
         }
 
         $percent = $this->overallPercent($project);
-        if ($percent < 100) {
+        $minPercent = $this->minRequiredPercent($project);
+        if ($percent < $minPercent) {
             return back()->withErrors([
-                'attachments_package' => 'La generación de adjuntos se habilita solo al 100%.',
+                'attachments_package' => "La generación de adjuntos se habilita a partir de {$minPercent}%.",
             ]);
         }
 
@@ -133,6 +134,11 @@ class AttachmentPackageRunController extends Controller
         }
 
         return (int) round(($done / $total) * 100);
+    }
+
+    private function minRequiredPercent(Project $project): int
+    {
+        return max(1, min(100, (int) ($project->attachments_min_percent ?? 80)));
     }
 
     private function expireStaleRuns(int $projectId): void

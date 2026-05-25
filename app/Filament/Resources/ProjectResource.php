@@ -69,6 +69,17 @@ class ProjectResource extends Resource
                             ->default('sgr')
                             ->required()
                             ->native(false),
+                        TextInput::make('attachments_min_percent')
+                            ->label('Umbral mínimo para generar carteras (%)')
+                            ->numeric()
+                            ->default(80)
+                            ->minValue(1)
+                            ->maxValue(100)
+                            ->step(1)
+                            ->required(fn (): bool => static::canEditAttachmentThreshold())
+                            ->helperText('General por defecto: 80%. Editable solo por Admin, Director o Formulador Maestro.')
+                            ->disabled(fn (): bool => !static::canEditAttachmentThreshold())
+                            ->dehydrated(fn (): bool => static::canEditAttachmentThreshold()),
                         TextInput::make('valor')
                             ->label('Valor')
                             ->prefix('$')
@@ -460,14 +471,6 @@ class ProjectResource extends Resource
                     ->label('Gestionar')
                     ->icon('heroicon-o-folder')
                     ->url(fn (Project $record): string => static::getUrl('manage', ['record' => $record])),
-                Tables\Actions\Action::make('banco_excel')
-                    ->label('Banco Excel')
-                    ->icon('heroicon-o-table-cells')
-                    ->url(fn (Project $record): string => static::getUrl('bank', ['record' => $record])),
-                Tables\Actions\Action::make('adjuntos_pdf')
-                    ->label('Paquete PDF')
-                    ->icon('heroicon-o-archive-box')
-                    ->url(fn (Project $record): string => static::getUrl('attachments', ['record' => $record])),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
@@ -485,7 +488,7 @@ class ProjectResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()
+        $query = parent::getEloquentQuery()
             ->with(['sectores', 'municipios', 'producto', 'formulador', 'estructurador'])
             ->withCount('requisitos')
             ->withCount([
@@ -494,6 +497,22 @@ class ProjectResource extends Resource
                         ->where('in_drive', true);
                 },
             ]);
+
+        $user = auth()->user();
+        if (!$user) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        // Admin, director y formulador maestro pueden ver todo el portafolio.
+        if ($user->isAdminUser() || $user->hasAnyRole(['director', 'formulador_maestro'])) {
+            return $query;
+        }
+
+        // El resto de roles operativos solo ve proyectos donde esté asignado.
+        return $query->where(function (Builder $scoped) use ($user) {
+            $scoped->where('formulador_id', $user->id)
+                ->orWhere('estructurador_id', $user->id);
+        });
     }
 
 
@@ -733,7 +752,7 @@ class ProjectResource extends Resource
     {
         $user = auth()->user();
 
-        return (bool) ($user && $user->canMutateProjects());
+        return (bool) ($user && $user->canCreateProjects());
     }
 
     public static function canEdit($record): bool
@@ -748,5 +767,12 @@ class ProjectResource extends Resource
         $user = auth()->user();
 
         return (bool) ($user && $user->isAdminUser());
+    }
+
+    protected static function canEditAttachmentThreshold(): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && $user->hasAnyRole(['admin', 'director', 'formulador_maestro']));
     }
 }

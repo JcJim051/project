@@ -22,6 +22,7 @@ class Project extends Model
         'secretaria',
         'ruta_drive',
         'drive_folder_id',
+        'attachments_min_percent',
         'formulador_id',
         'estructurador_id',
         'fecha_creacion',
@@ -30,6 +31,7 @@ class Project extends Model
     protected $casts = [
         'fecha_creacion' => 'date',
         'valor' => 'decimal:2',
+        'attachments_min_percent' => 'integer',
     ];
 
     public function producto()
@@ -100,5 +102,10 @@ class Project extends Model
     public function bankActivityRows()
     {
         return $this->hasMany(ProjectBankActivityRow::class)->orderBy('orden');
+    }
+
+    public function transferRequests()
+    {
+        return $this->hasMany(ProjectTransferRequest::class)->latest('id');
     }
 }

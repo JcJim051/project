@@ -3,15 +3,17 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Filament\Models\Contracts\HasAvatar;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Fortify\TwoFactorAuthenticatable;
 use Laravel\Jetstream\HasProfilePhoto;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Collection;
 
-class User extends Authenticatable
+class User extends Authenticatable implements HasAvatar
 {
     use HasApiTokens;
     use HasFactory;
@@ -145,6 +147,21 @@ class User extends Authenticatable
         return $this->canAccessPanel() && !$this->isReadOnlyUser();
     }
 
+    public function canCreateProjects(): bool
+    {
+        return $this->isAdminUser() || $this->hasAnyRole(['director', 'formulador_maestro']);
+    }
+
+    public function canRequestMgaTransfer(): bool
+    {
+        return $this->hasAnyRole(['formulador', 'estructurador']) || $this->isAdminUser();
+    }
+
+    public function canAuthorizeMgaTransfer(): bool
+    {
+        return $this->isAdminUser() || $this->hasAnyRole(['director', 'formulador_maestro']);
+    }
+
     public function hasPermission(string $slug): bool
     {
         if ($this->isAdminUser()) {
@@ -154,5 +171,21 @@ class User extends Authenticatable
         return $this->roles()
             ->whereHas('permissions', fn ($query) => $query->where('slug', $slug))
             ->exists();
+    }
+
+    public function getFilamentAvatarUrl(): ?string
+    {
+        return $this->profile_photo_path
+            ? Storage::disk('public')->url($this->profile_photo_path)
+            : null;
+    }
+
+    public function getProfilePhotoUrlAttribute(): string
+    {
+        if ($this->profile_photo_path) {
+            return Storage::disk('public')->url($this->profile_photo_path);
+        }
+
+        return $this->defaultProfilePhotoUrl();
     }
 }

@@ -84,6 +84,8 @@ class ProjectController extends Controller
 
     public function create()
     {
+        abort_unless(auth()->user()?->canCreateProjects(), 403);
+
         $sectors = Sector::query()->where('activo', true)->orderBy('codigo')->orderBy('nombre')->get();
         $secretarias = Secretaria::query()->where('activo', true)->orderBy('nombre')->get();
         $municipios = Municipio::query()->where('activo', true)->orderBy('nombre')->get();
@@ -95,6 +97,8 @@ class ProjectController extends Controller
 
     public function store(Request $request)
     {
+        abort_unless(auth()->user()?->canCreateProjects(), 403);
+
         $data = $this->validateProject($request);
 
         if (!empty($data['ruta_drive'])) {

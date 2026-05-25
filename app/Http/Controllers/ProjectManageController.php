@@ -7,6 +7,7 @@ use App\Models\Requirement;
 use App\Models\RequirementEvidence;
 use App\Models\AttachmentPackageRun;
 use App\Services\GoogleDriveService;
+use App\Services\MgaTransferAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -29,7 +30,7 @@ class ProjectManageController extends Controller
     {
         $this->expireStaleAttachmentRuns($project->id);
 
-        $project->load(['requisitos', 'sectores']);
+        $project->load(['requisitos', 'sectores', 'formulador', 'estructurador']);
         $requirements = $this->getActiveRequirementsForProject($project);
 
         $renumerated = $this->buildRenumerationMap($requirements);
@@ -95,6 +96,32 @@ class ProjectManageController extends Controller
             ->limit(8)
             ->get();
         $attachmentPdfHealth = $this->buildAttachmentPdfHealth();
+        $attachmentsMinPercent = max(1, min(100, (int) ($project->attachments_min_percent ?? 80)));
+        /** @var MgaTransferAuthorizationService $mgaService */
+        $mgaService = app(MgaTransferAuthorizationService::class);
+        $transferRequest = $mgaService->current($project);
+        $canTransferToMga = $mgaService->canTransfer($project, $overallPercent);
+        $assigned = collect([
+            $project->formulador_id => $project->formulador?->name ?? 'Formulador',
+            $project->estructurador_id => $project->estructurador?->name ?? 'Estructurador',
+        ])->filter(fn ($name, $id) => !empty($id));
+        $transferReceiptStates = [];
+        foreach ($assigned as $userId => $name) {
+            $receipt = $transferRequest?->receipts?->firstWhere('user_id', (int) $userId);
+            $transferReceiptStates[] = [
+                'user_id' => (int) $userId,
+                'name' => $name,
+                'acknowledged' => (bool) $receipt?->acknowledged_at,
+                'acknowledged_at' => optional($receipt?->acknowledged_at)->format('Y-m-d H:i'),
+            ];
+        }
+        $currentUserId = (int) auth()->id();
+        $canAcknowledgeTransfer = in_array($currentUserId, $assigned->keys()->map(fn ($id) => (int) $id)->all(), true)
+            && $transferRequest
+            && in_array($transferRequest->status, ['approved', 'rejected'], true);
+        $canRequestTransfer = auth()->user()?->canRequestMgaTransfer() === true
+            && !$project->transferRequests()->where('status', 'pending')->exists();
+        $canAuthorizeTransfer = auth()->user()?->canAuthorizeMgaTransfer() === true;
 
         return view($viewName, [
             'project' => $project,
@@ -111,7 +138,14 @@ class ProjectManageController extends Controller
             'topGroupProgress' => $topGroupProgress,
             'attachmentRuns' => $attachmentRuns,
             'attachmentPdfHealth' => $attachmentPdfHealth,
-            'canGenerateAttachmentPackage' => $overallPercent === 100,
+            'attachmentsMinPercent' => $attachmentsMinPercent,
+            'canGenerateAttachmentPackage' => $overallPercent >= $attachmentsMinPercent,
+            'transferRequest' => $transferRequest,
+            'canTransferToMga' => $canTransferToMga,
+            'canRequestTransfer' => $canRequestTransfer,
+            'canAuthorizeTransfer' => $canAuthorizeTransfer,
+            'canAcknowledgeTransfer' => $canAcknowledgeTransfer,
+            'transferReceiptStates' => $transferReceiptStates,
         ]);
     }
 

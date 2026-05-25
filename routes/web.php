@@ -11,6 +11,8 @@ use App\Http\Controllers\ProjectDocumentController;
 use App\Http\Controllers\ProjectDriveEvidenceController;
 use App\Http\Controllers\ProjectBankController;
 use App\Http\Controllers\AttachmentPackageRunController;
+use App\Http\Controllers\ProjectTransferRequestController;
+use App\Http\Controllers\ProjectTransferReviewController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -26,8 +28,8 @@ Route::middleware([
     'verified',
 ])->get('/drive/auth', [DriveAuthController::class, 'redirect'])->name('drive.auth');
 
-Route::get('/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback');
-Route::get('/panel/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback.panel');
+Route::match(['get', 'post'], '/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback');
+Route::match(['get', 'post'], '/panel/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback.panel');
 
 Route::middleware([
     'auth',
@@ -56,6 +58,14 @@ Route::middleware([
     Route::post('/projects/{project}/attachments-pdf/runs', [AttachmentPackageRunController::class, 'store'])->name('projects.attachments.runs.store');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}', [AttachmentPackageRunController::class, 'show'])->name('projects.attachments.runs.show');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}/download', [AttachmentPackageRunController::class, 'download'])->name('projects.attachments.runs.download');
+    Route::post('/projects/{project}/mga-transfer/send', [ProjectTransferRequestController::class, 'send'])->name('projects.mga_transfer.send');
+    Route::post('/projects/{project}/mga-transfer/{transferRequest}/approve', [ProjectTransferRequestController::class, 'approve'])->name('projects.mga_transfer.approve');
+    Route::post('/projects/{project}/mga-transfer/{transferRequest}/reject', [ProjectTransferRequestController::class, 'reject'])->name('projects.mga_transfer.reject');
+    Route::post('/projects/{project}/mga-transfer/{transferRequest}/acknowledge', [ProjectTransferRequestController::class, 'acknowledge'])->name('projects.mga_transfer.acknowledge');
+    Route::post('/panel/project-transfer-requests/{transferRequest}/comments', [ProjectTransferReviewController::class, 'saveComments'])->name('project-transfer-requests.comments');
+    Route::post('/panel/project-transfer-requests/{transferRequest}/{decision}', [ProjectTransferReviewController::class, 'decide'])
+        ->where('decision', 'approve|reject')
+        ->name('project-transfer-requests.decide');
 
     Route::get('/projects/{project}/documents', [ProjectDocumentController::class, 'index'])->name('projects.documents');
     Route::get('/projects/{project}/documents/{documentTemplate}', [ProjectDocumentController::class, 'download'])->name('projects.documents.download');

@@ -57,6 +57,6 @@ class ManageProjectBank extends Page
     {
         $name = $this->record?->nombre ?: 'Proyecto';
 
-        return 'Banco Excel: ' . $name;
+        return 'Generar documentos del banco: ' . $name;
     }
 }

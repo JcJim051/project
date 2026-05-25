@@ -965,12 +965,9 @@
                 x-text="uploadMessage">
             </div>
 
-            @if (!$driveConnected)
-                <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm flex items-center justify-between">
-                    <span>Conecta Google Drive para sincronizar evidencias automaticamente.</span>
-                    <a href="{{ route('drive.auth', ['return' => route('filament.admin.resources.projects.manage', ['record' => $project])]) }}" class="text-amber-700 font-semibold hover:text-amber-800">
-                        Conectar Drive
-                    </a>
+            @if (!$driveConnected && !$project->drive_folder_id)
+                <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm">
+                    Este proyecto no tiene carpeta de Drive configurada. Agrega la ruta en Editar proyecto.
                 </div>
             @elseif (!$project->drive_folder_id)
                 <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm">
@@ -1031,6 +1028,11 @@
                         <p class="text-sm text-gray-500">Panel maestro-detalle para gestionar evidencias por grupo.</p>
                     </div>
                     <div class="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+                        <a
+                            href="{{ route('filament.admin.resources.projects.bank', ['record' => $project]) }}"
+                            class="h-8 px-3 inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition-colors">
+                            Generar documentos del banco
+                        </a>
                         <a
                             href="{{ route('projects.documents', $project) }}"
                             class="h-8 px-3 inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors">
@@ -1382,6 +1384,52 @@
                 </div>
             </div>
 
+            <div class="rounded-md border border-violet-100 bg-violet-50/40 p-3 mt-3 space-y-3">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <div class="text-xs font-semibold text-violet-700">Estado transferencia MGA</div>
+                        @if ($transferRequest)
+                            <div class="mt-1 text-xs text-gray-700">
+                                Estado:
+                                <span class="font-semibold">{{ strtoupper($transferRequest->status) }}</span>
+                                · Enviado: {{ optional($transferRequest->requested_at)->format('Y-m-d H:i') }}
+                                @if($transferRequest->decided_at)
+                                    · Decidido: {{ optional($transferRequest->decided_at)->format('Y-m-d H:i') }}
+                                @endif
+                            </div>
+                        @else
+                            <div class="mt-1 text-xs text-gray-700">Sin solicitudes aún.</div>
+                        @endif
+                        <div class="mt-1 text-xs {{ $canTransferToMga ? 'text-emerald-700' : 'text-amber-700' }}">
+                            {{ $canTransferToMga ? 'Transferencia a MGA habilitada.' : 'Transferencia a MGA no habilitada aún.' }}
+                        </div>
+                    </div>
+                    @if ($canRequestTransfer)
+                        <form method="POST" action="{{ route('projects.mga_transfer.send', $project) }}" class="flex items-center gap-2">
+                            @csrf
+                            <input type="text" name="request_note" placeholder="Comentario de envío (opcional)" class="h-8 rounded-md border border-violet-200 px-2 text-xs text-gray-700">
+                            <button type="submit" class="h-8 px-3 rounded-md border border-violet-300 bg-white text-violet-700 text-xs font-semibold hover:bg-violet-100">Enviar para evaluación</button>
+                        </form>
+                    @endif
+                </div>
+
+                @if ($transferRequest && $transferRequest->decision_note)
+                    <div class="rounded-md border border-gray-200 bg-white p-2">
+                        <div class="text-[11px] font-semibold text-gray-700">Comentario de decisión</div>
+                        <div class="text-xs text-gray-700 mt-1">{{ $transferRequest->decision_note }}</div>
+                        <div class="text-[11px] text-gray-500 mt-1">Por: {{ $transferRequest->decidedBy?->name ?? 'N/A' }}</div>
+                    </div>
+                @endif
+
+                @if ($transferRequest && $transferRequest->status === 'pending')
+                    <div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        Estado de transferencia: en revisión.
+                    </div>
+                @endif
+
+                
+            </div>
+
             <div class="rounded-md border border-indigo-100 bg-indigo-50/40 p-3 flex items-center justify-between mt-3">
                 <div>
                     <div class="text-xs font-semibold text-indigo-700">Paquete PDF con adjuntos</div>
@@ -1392,6 +1440,15 @@
                     Abrir modulo
                 </a>
             </div>
+
+            @if (!$driveConnected)
+                <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm flex items-center justify-between">
+                    <span>Conecta Google Drive para sincronizar evidencias automaticamente.</span>
+                    <a href="{{ route('drive.auth', ['return' => route('filament.admin.resources.projects.manage', ['record' => $project])]) }}" class="text-amber-700 font-semibold hover:text-amber-800">
+                        Conectar Drive
+                    </a>
+                </div>
+            @endif
 
             @if ($driveConnected && $driveReady)
                 <div class="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-sky-700 text-sm flex items-center justify-between gap-2">
