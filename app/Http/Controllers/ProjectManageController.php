@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\GamificationActivityTriggered;
 use App\Models\Project;
 use App\Models\Requirement;
 use App\Models\RequirementEvidence;
@@ -164,6 +165,13 @@ class ProjectManageController extends Controller
             return $this->uploadErrorResponse($expectsJson, 422, 'requirement_not_applicable', 'Este requisito no está marcado para el proyecto.');
         }
 
+        $hadValidEvidenceBefore = RequirementEvidence::query()
+            ->where('project_id', $project->id)
+            ->where('requirement_id', $requirement->id)
+            ->where('drive_folder_name', $requirement->carpeta)
+            ->where('in_drive', true)
+            ->exists();
+
         if (!$project->drive_folder_id) {
             return $this->uploadErrorResponse($expectsJson, 422, 'missing_drive_folder', 'El proyecto no tiene carpeta de Drive configurada.');
         }
@@ -261,6 +269,14 @@ class ProjectManageController extends Controller
                 ];
             })->values()->all(),
         ];
+
+        if (!$hadValidEvidenceBefore && ($payload['has_evidence'] ?? false) && $userId) {
+            event(new GamificationActivityTriggered('req_first_valid_evidence', (int) $userId, [
+                'project_id' => (int) $project->id,
+                'requirement_id' => (int) $requirement->id,
+                'metadata' => ['uploaded_count' => (int) $uploadedCount],
+            ]));
+        }
 
         if ($expectsJson) {
             return response()->json([

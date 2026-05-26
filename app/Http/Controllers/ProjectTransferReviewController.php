@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\GamificationActivityTriggered;
 use App\Models\Project;
 use App\Models\ProjectTransferRequest;
 use App\Models\ProjectTransferRequestRequirementComment;
@@ -145,6 +146,13 @@ class ProjectTransferReviewController extends Controller
             'decided_at' => now(),
             'decided_by_user_id' => auth()->id(),
         ]);
+
+        if ($decision === 'approve' && (int) $transferRequest->requested_by_user_id > 0) {
+            event(new GamificationActivityTriggered('mga_approved', (int) $transferRequest->requested_by_user_id, [
+                'project_id' => (int) $transferRequest->project_id,
+                'metadata' => ['transfer_request_id' => (int) $transferRequest->id],
+            ]));
+        }
 
         $this->notifyProjectTeamDecision($transferRequest, $decision);
 

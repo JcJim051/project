@@ -137,6 +137,11 @@ class User extends Authenticatable implements HasAvatar
             || $this->hasAnyRole(['director', 'formulador_maestro']);
     }
 
+    public function canManagePointActivities(): bool
+    {
+        return $this->isAdminUser() || $this->hasRole('director');
+    }
+
     public function isReadOnlyUser(): bool
     {
         return $this->hasRole('consulta');

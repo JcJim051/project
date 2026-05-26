@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Events\GamificationActivityTriggered;
 use App\Models\AttachmentPackageRun;
 use App\Services\AttachmentPackageService;
 use Illuminate\Bus\Queueable;
@@ -53,6 +54,13 @@ class GenerateAttachmentPackageJob implements ShouldQueue
                     'heartbeat_at' => now()->toDateTimeString(),
                 ]),
             ]);
+
+            if ((int) $run->user_id > 0 && (int) $run->project_id > 0) {
+                event(new GamificationActivityTriggered('pdf_package_generated', (int) $run->user_id, [
+                    'project_id' => (int) $run->project_id,
+                    'metadata' => ['run_id' => (int) $run->id],
+                ]));
+            }
         } catch (\Throwable $e) {
             $run->update([
                 'status' => 'failed',

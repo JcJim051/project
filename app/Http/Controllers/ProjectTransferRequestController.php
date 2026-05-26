@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\GamificationActivityTriggered;
 use App\Models\Project;
 use App\Models\ProjectTransferRequest;
 use App\Models\RequirementEvidence;
@@ -39,6 +40,10 @@ class ProjectTransferRequestController extends Controller
 
         $transferRequest = $service->request($project, $user, $validated['request_note'] ?? null);
         $this->notifyEvaluators($project, $transferRequest, $user, $validated['request_note'] ?? null);
+        event(new GamificationActivityTriggered('mga_submitted', (int) $user->id, [
+            'project_id' => (int) $project->id,
+            'metadata' => ['transfer_request_id' => (int) $transferRequest->id],
+        ]));
 
         return back()->with('status', 'Proyecto enviado para evaluación MGA.');
     }

@@ -1,0 +1,85 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\MailSetting;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
+
+class MailSettingsService
+{
+    private const CACHE_KEY = 'mail_settings_active';
+
+    public function activeSettings(): ?array
+    {
+        if (!$this->tableAvailable()) {
+            return null;
+        }
+
+        return Cache::remember(self::CACHE_KEY, now()->addMinutes(5), function () {
+            $setting = MailSetting::query()->latest('id')->first();
+            if (!$setting) {
+                return null;
+            }
+
+            return [
+                'host' => (string) ($setting->host ?? ''),
+                'port' => (int) ($setting->port ?? 0),
+                'username' => (string) ($setting->username ?? ''),
+                'password' => (string) ($setting->password ?? ''),
+                'encryption' => (string) ($setting->encryption ?? ''),
+                'from_address' => (string) ($setting->from_address ?? ''),
+                'from_name' => (string) ($setting->from_name ?? ''),
+                'ehlo_domain' => (string) ($setting->ehlo_domain ?? ''),
+            ];
+        });
+    }
+
+    public function applyRuntimeConfig(): void
+    {
+        $active = $this->activeSettings();
+        if (!$active) {
+            return;
+        }
+
+        if ($active['host'] !== '') {
+            config(['mail.mailers.smtp.host' => $active['host']]);
+        }
+        if ($active['port'] > 0) {
+            config(['mail.mailers.smtp.port' => $active['port']]);
+        }
+        if ($active['username'] !== '') {
+            config(['mail.mailers.smtp.username' => $active['username']]);
+        }
+        if ($active['password'] !== '') {
+            config(['mail.mailers.smtp.password' => $active['password']]);
+        }
+        if ($active['encryption'] !== '') {
+            config(['mail.mailers.smtp.encryption' => $active['encryption']]);
+        }
+        if ($active['ehlo_domain'] !== '') {
+            config(['mail.mailers.smtp.local_domain' => $active['ehlo_domain']]);
+        }
+        if ($active['from_address'] !== '') {
+            config(['mail.from.address' => $active['from_address']]);
+        }
+        if ($active['from_name'] !== '') {
+            config(['mail.from.name' => $active['from_name']]);
+        }
+    }
+
+    public function clearCache(): void
+    {
+        Cache::forget(self::CACHE_KEY);
+    }
+
+    private function tableAvailable(): bool
+    {
+        try {
+            return Schema::hasTable('mail_settings');
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+}
+
