@@ -8,6 +8,7 @@ use App\Models\ProjectTransferRequest;
 use App\Models\RequirementEvidence;
 use App\Models\User;
 use App\Services\MgaTransferAuthorizationService;
+use App\Services\OfficialEmailNotificationService;
 use Filament\Notifications\Actions\Action as NotificationAction;
 use Filament\Notifications\Events\DatabaseNotificationsSent;
 use Filament\Notifications\Notification as FilamentNotification;
@@ -175,5 +176,7 @@ class ProjectTransferRequestController extends Controller
             $targetUser->notifyNow($notification->toDatabase());
             DatabaseNotificationsSent::dispatch($targetUser);
         }
+
+        app(OfficialEmailNotificationService::class)->sendMgaSubmitted($project, $users, $sender, $note, $transferRequest);
     }
 }

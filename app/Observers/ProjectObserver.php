@@ -4,6 +4,7 @@ namespace App\Observers;
 
 use App\Models\Project;
 use App\Models\User;
+use App\Services\OfficialEmailNotificationService;
 use Filament\Notifications\Actions\Action as NotificationAction;
 use Filament\Notifications\Events\DatabaseNotificationsSent;
 use Filament\Notifications\Notification as FilamentNotification;
@@ -60,6 +61,6 @@ class ProjectObserver
 
         $targetUser->notifyNow($notification->toDatabase());
         DatabaseNotificationsSent::dispatch($targetUser);
+        app(OfficialEmailNotificationService::class)->sendAssignment($project, $targetUser, $roleLabel, $isNewProject);
     }
 }
-

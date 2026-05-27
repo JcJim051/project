@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Mail\ProjectEventMail;
 use App\Models\MailSetting;
 use App\Services\MailSettingsService;
 use Filament\Forms\Components\Select;
@@ -12,6 +13,7 @@ use Filament\Forms\Form;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 
 class MailSettings extends Page implements HasForms
 {
@@ -160,14 +162,31 @@ class MailSettings extends Page implements HasForms
 
         $service->applyRuntimeConfig();
         try {
-            Mail::raw(
-                'Prueba de correo SMTP desde la plataforma AIM. Si recibiste este mensaje, la configuración está correcta.',
-                function ($message) use ($user): void {
-                    $message->to($user->email)
-                        ->subject('Prueba SMTP - AIM Proyectos');
-                }
-            );
+            Log::info('smtp_test_send_start', [
+                'to' => $user->email,
+                'mailer' => config('mail.default'),
+                'host' => config('mail.mailers.smtp.host'),
+                'from' => config('mail.from.address'),
+            ]);
+            Mail::mailer('smtp')
+                ->to($user->email)
+                ->send(new ProjectEventMail(
+                    subjectLine: 'Prueba SMTP - AIM Proyectos',
+                    title: 'Prueba de notificación oficial',
+                    projectName: 'Entorno de pruebas',
+                    eventLabel: 'Validación de configuración SMTP',
+                    detail: 'Si recibes este correo con diseño HTML, la configuración de envío está correcta y lista para notificaciones oficiales.',
+                    actionUrl: url('/panel'),
+                    actionLabel: 'Ir al panel'
+                ));
+            Log::info('smtp_test_send_ok', [
+                'to' => $user->email,
+            ]);
         } catch (\Throwable $e) {
+            Log::error('smtp_test_send_failed', [
+                'to' => $user->email,
+                'error' => $e->getMessage(),
+            ]);
             Notification::make()
                 ->title('Error enviando correo de prueba')
                 ->body($e->getMessage())

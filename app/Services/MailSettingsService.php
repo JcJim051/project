@@ -42,6 +42,8 @@ class MailSettingsService
             return;
         }
 
+        config(['mail.default' => 'smtp']);
+
         if ($active['host'] !== '') {
             config(['mail.mailers.smtp.host' => $active['host']]);
         }
@@ -82,4 +84,3 @@ class MailSettingsService
         }
     }
 }
-
