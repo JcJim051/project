@@ -4,8 +4,10 @@ namespace App\Filament\Resources\ProjectResource\Pages;
 
 use App\Filament\Resources\ProjectResource;
 use App\Models\Municipio;
+use App\Models\Project;
 use App\Services\GoogleDriveService;
 use App\Services\ProjectBankExcelService;
+use App\Services\ProjectStatusService;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 
@@ -15,6 +17,7 @@ class CreateProject extends CreateRecord
     protected int $primarySectorId = 0;
     protected array $secondarySectorIds = [];
     protected array $municipioIds = [];
+    protected array $executionYearIds = [];
     protected array $bankProfileData = [];
     protected ?string $driveSetupWarning = null;
 
@@ -29,9 +32,11 @@ class CreateProject extends CreateRecord
 
         $this->validatePrimaryAndSecondary($data);
         $this->validateProductBelongsToPrimarySector($data);
+        $this->validatePriorityByEstructurador($data);
         $this->primarySectorId = (int) ($data['sector_principal_id'] ?? 0);
         $this->secondarySectorIds = collect($data['sectores_secundarios'] ?? [])->map(fn ($id) => (int) $id)->all();
         $this->municipioIds = collect($data['municipio_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values()->all();
+        $this->executionYearIds = collect($data['execution_year_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values()->all();
         $this->bankProfileData = [
             'horizonte_anio_0' => $data['horizonte_anio_0'] ?? null,
             'horizonte_anio_1' => $data['horizonte_anio_1'] ?? null,
@@ -61,6 +66,7 @@ class CreateProject extends CreateRecord
             $data['sector_principal_id'],
             $data['sectores_secundarios'],
             $data['municipio_ids'],
+            $data['execution_year_ids'],
             $data['horizonte_anio_0'],
             $data['horizonte_anio_1'],
             $data['horizonte_anio_2'],
@@ -91,8 +97,13 @@ class CreateProject extends CreateRecord
 
     protected function afterCreate(): void
     {
+        /** @var ProjectStatusService $statusService */
+        $statusService = app(ProjectStatusService::class);
+        $statusService->setByName($this->record, 'Iniciativa');
+
         $this->syncSectors();
         $this->record->municipios()->sync($this->municipioIds);
+        $this->record->executionYears()->sync($this->executionYearIds);
         /** @var ProjectBankExcelService $service */
         $service = app(ProjectBankExcelService::class);
         $service->ensureSeeded($this->record);
@@ -170,6 +181,26 @@ class CreateProject extends CreateRecord
             ->orderBy('nombre')
             ->pluck('nombre')
             ->implode(', ');
+    }
+
+    private function validatePriorityByEstructurador(array $data): void
+    {
+        $estructuradorId = (int) ($data['estructurador_id'] ?? 0);
+        $prioridad = (int) ($data['prioridad_estructurador'] ?? 0);
+        if ($estructuradorId <= 0 || $prioridad <= 0) {
+            return;
+        }
+
+        $exists = Project::query()
+            ->where('estructurador_id', $estructuradorId)
+            ->where('prioridad_estructurador', $prioridad)
+            ->exists();
+
+        if ($exists) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'prioridad_estructurador' => 'Ese estructurador ya tiene esa prioridad.',
+            ]);
+        }
     }
 
     private function createDriveStructureForProject(array $data): array

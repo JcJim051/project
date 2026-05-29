@@ -31,6 +31,7 @@ class User extends Authenticatable implements HasAvatar
         'email',
         'password',
         'is_admin',
+        'must_change_password',
     ];
 
     /**
@@ -53,6 +54,7 @@ class User extends Authenticatable implements HasAvatar
     protected $casts = [
         'email_verified_at' => 'datetime',
         'is_admin' => 'boolean',
+        'must_change_password' => 'boolean',
     ];
 
     /**
@@ -138,6 +140,11 @@ class User extends Authenticatable implements HasAvatar
     }
 
     public function canManagePointActivities(): bool
+    {
+        return $this->isAdminUser() || $this->hasRole('director');
+    }
+
+    public function canManageDirectorCatalogs(): bool
     {
         return $this->isAdminUser() || $this->hasRole('director');
     }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Project;
 use App\Models\Requirement;
+use App\Services\ProjectStatusService;
 use Illuminate\Http\Request;
 
 class ChecklistController extends Controller
@@ -87,6 +88,7 @@ class ChecklistController extends Controller
 
         $ids = $data['aplica'] ?? [];
         $project->requisitos()->sync($ids);
+        app(ProjectStatusService::class)->setByName($project, 'Formulación y presentación');
 
         if ($request->boolean('panel_return')) {
             return redirect()

@@ -96,7 +96,7 @@ class PointRankResource extends Resource
     public static function canViewAny(): bool
     {
         $user = auth()->user();
-        return (bool) ($user && $user->canAccessPanel());
+        return (bool) ($user && $user->canManagePointActivities());
     }
 
     public static function canCreate(): bool
@@ -115,4 +115,3 @@ class PointRankResource extends Resource
         return static::canCreate();
     }
 }
-

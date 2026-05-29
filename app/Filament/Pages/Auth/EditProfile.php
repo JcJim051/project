@@ -3,10 +3,12 @@
 namespace App\Filament\Pages\Auth;
 
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
 use Filament\Pages\Auth\EditProfile as BaseEditProfile;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -23,6 +25,12 @@ class EditProfile extends BaseEditProfile
             'form' => $this->form(
                 $this->makeForm()
                     ->schema([
+                        Placeholder::make('force_password_alert')
+                            ->label('')
+                            ->visible(fn (): bool => (bool) auth()->user()?->must_change_password)
+                            ->content(new HtmlString(
+                                '<div style="padding:10px 12px;border:1px solid #f59e0b;background:#fffbeb;color:#92400e;border-radius:8px;font-size:13px;font-weight:600;">Debes cambiar tu contraseña y cargar una foto de perfil para continuar usando el panel.</div>'
+                            )),
                         FileUpload::make('profile_photo_path')
                             ->label('Foto de perfil')
                             ->image()
@@ -66,8 +74,22 @@ class EditProfile extends BaseEditProfile
         $photoPath = $data['profile_photo_path'] ?? null;
         $currentPassword = (string) ($data['current_password'] ?? '');
         $isChangingPassword = filled($data['password'] ?? null);
+        $isFirstAccessForced = (bool) $record->must_change_password;
+        $finalPhotoPath = $hasPhotoInPayload ? $photoPath : $record->profile_photo_path;
         unset($data['profile_photo_path']);
         unset($data['current_password']);
+
+        if ($isFirstAccessForced && ! $isChangingPassword) {
+            throw ValidationException::withMessages([
+                'data.password' => 'Debes definir una nueva contraseña para continuar.',
+            ]);
+        }
+
+        if ($isFirstAccessForced && blank($finalPhotoPath)) {
+            throw ValidationException::withMessages([
+                'data.profile_photo_path' => 'Debes cargar una foto de perfil para continuar.',
+            ]);
+        }
 
         if ($isChangingPassword && !Hash::check($currentPassword, (string) $record->password)) {
             throw ValidationException::withMessages([
@@ -76,6 +98,12 @@ class EditProfile extends BaseEditProfile
         }
 
         $record->update($data);
+
+        if ($isChangingPassword && (bool) $record->must_change_password && filled($finalPhotoPath)) {
+            $record->forceFill([
+                'must_change_password' => false,
+            ])->save();
+        }
 
         if ($hasPhotoInPayload) {
             $record->forceFill([

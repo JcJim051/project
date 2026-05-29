@@ -9,6 +9,7 @@ use App\Models\RequirementEvidence;
 use App\Models\User;
 use App\Services\MgaTransferAuthorizationService;
 use App\Services\OfficialEmailNotificationService;
+use App\Services\ProjectStatusService;
 use Filament\Notifications\Actions\Action as NotificationAction;
 use Filament\Notifications\Events\DatabaseNotificationsSent;
 use Filament\Notifications\Notification as FilamentNotification;
@@ -40,6 +41,7 @@ class ProjectTransferRequestController extends Controller
         ]);
 
         $transferRequest = $service->request($project, $user, $validated['request_note'] ?? null);
+        app(ProjectStatusService::class)->setByName($project, 'Viabilidad y registro');
         $this->notifyEvaluators($project, $transferRequest, $user, $validated['request_note'] ?? null);
         event(new GamificationActivityTriggered('mga_submitted', (int) $user->id, [
             'project_id' => (int) $project->id,

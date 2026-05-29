@@ -4,6 +4,7 @@ namespace App\Filament\Resources\ProjectResource\Pages;
 
 use App\Filament\Resources\ProjectResource;
 use App\Models\Municipio;
+use App\Models\Project;
 use App\Services\ProjectBankExcelService;
 use Filament\Actions;
 use Filament\Resources\Pages\EditRecord;
@@ -14,6 +15,7 @@ class EditProject extends EditRecord
     protected int $primarySectorId = 0;
     protected array $secondarySectorIds = [];
     protected array $municipioIds = [];
+    protected array $executionYearIds = [];
     protected array $bankProfileData = [];
 
     protected function getHeaderActions(): array
@@ -28,9 +30,11 @@ class EditProject extends EditRecord
         $data['drive_folder_id'] = ProjectResource::extractDriveFolderId($data['ruta_drive'] ?? null);
         $this->validatePrimaryAndSecondary($data);
         $this->validateProductBelongsToPrimarySector($data);
+        $this->validatePriorityByEstructurador($data);
         $this->primarySectorId = (int) ($data['sector_principal_id'] ?? 0);
         $this->secondarySectorIds = collect($data['sectores_secundarios'] ?? [])->map(fn ($id) => (int) $id)->all();
         $this->municipioIds = collect($data['municipio_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values()->all();
+        $this->executionYearIds = collect($data['execution_year_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values()->all();
         $this->bankProfileData = [
             'horizonte_anio_0' => $data['horizonte_anio_0'] ?? null,
             'horizonte_anio_1' => $data['horizonte_anio_1'] ?? null,
@@ -60,6 +64,7 @@ class EditProject extends EditRecord
             $data['sector_principal_id'],
             $data['sectores_secundarios'],
             $data['municipio_ids'],
+            $data['execution_year_ids'],
             $data['horizonte_anio_0'],
             $data['horizonte_anio_1'],
             $data['horizonte_anio_2'],
@@ -91,6 +96,7 @@ class EditProject extends EditRecord
     {
         $this->syncSectors();
         $this->record->municipios()->sync($this->municipioIds);
+        $this->record->executionYears()->sync($this->executionYearIds);
         /** @var ProjectBankExcelService $service */
         $service = app(ProjectBankExcelService::class);
         $service->ensureSeeded($this->record);
@@ -99,7 +105,7 @@ class EditProject extends EditRecord
 
     protected function mutateFormDataBeforeFill(array $data): array
     {
-        $this->record->loadMissing(['sectores', 'municipios']);
+        $this->record->loadMissing(['sectores', 'municipios', 'executionYears']);
         $primary = $this->record->sectores->first(fn ($sector) => (bool) ($sector->pivot->is_primary ?? false));
         if (!$primary) {
             $primary = $this->record->sectores->first();
@@ -119,6 +125,7 @@ class EditProject extends EditRecord
         $data['sector_principal_id'] = $primary?->id;
         $data['sectores_secundarios'] = $secondary;
         $data['municipio_ids'] = $this->record->municipios->pluck('id')->values()->all();
+        $data['execution_year_ids'] = $this->record->executionYears()->pluck('execution_years.id')->values()->all();
 
         if (empty($data['municipio_ids']) && !empty($this->record->municipio)) {
             $names = collect(explode(',', (string) $this->record->municipio))
@@ -225,5 +232,26 @@ class EditProject extends EditRecord
             ->orderBy('nombre')
             ->pluck('nombre')
             ->implode(', ');
+    }
+
+    private function validatePriorityByEstructurador(array $data): void
+    {
+        $estructuradorId = (int) ($data['estructurador_id'] ?? 0);
+        $prioridad = (int) ($data['prioridad_estructurador'] ?? 0);
+        if ($estructuradorId <= 0 || $prioridad <= 0) {
+            return;
+        }
+
+        $exists = Project::query()
+            ->where('id', '<>', (int) $this->record->id)
+            ->where('estructurador_id', $estructuradorId)
+            ->where('prioridad_estructurador', $prioridad)
+            ->exists();
+
+        if ($exists) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'prioridad_estructurador' => 'Ese estructurador ya tiene esa prioridad.',
+            ]);
+        }
     }
 }

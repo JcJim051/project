@@ -25,6 +25,13 @@ class Project extends Model
         'attachments_min_percent',
         'formulador_id',
         'estructurador_id',
+        'prioridad_entidad_id',
+        'prioridad_estructurador',
+        'profesional_ambiental_id',
+        'project_stage_id',
+        'project_status_id',
+        'duracion_meses',
+        'poblacion_objetivo',
         'fecha_creacion',
     ];
 
@@ -32,6 +39,8 @@ class Project extends Model
         'fecha_creacion' => 'date',
         'valor' => 'decimal:2',
         'attachments_min_percent' => 'integer',
+        'duracion_meses' => 'integer',
+        'poblacion_objetivo' => 'integer',
     ];
 
     public function producto()
@@ -48,6 +57,11 @@ class Project extends Model
     public function municipios()
     {
         return $this->belongsToMany(Municipio::class, 'municipio_project');
+    }
+
+    public function executionYears()
+    {
+        return $this->belongsToMany(ExecutionYear::class, 'execution_year_project');
     }
 
     public function getMunicipiosDisplayAttribute(): string
@@ -67,6 +81,26 @@ class Project extends Model
     public function estructurador()
     {
         return $this->belongsTo(User::class, 'estructurador_id');
+    }
+
+    public function prioridadEntidad()
+    {
+        return $this->belongsTo(PrioridadEntidad::class, 'prioridad_entidad_id');
+    }
+
+    public function profesionalAmbiental()
+    {
+        return $this->belongsTo(ProfesionalAmbiental::class, 'profesional_ambiental_id');
+    }
+
+    public function stage()
+    {
+        return $this->belongsTo(ProjectStage::class, 'project_stage_id');
+    }
+
+    public function status()
+    {
+        return $this->belongsTo(ProjectStatus::class, 'project_status_id');
     }
 
     public function requisitos()

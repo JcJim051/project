@@ -5,13 +5,19 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\ProjectResource\Pages;
 use App\Models\Municipio;
 use App\Models\FuenteFinanciacion;
+use App\Models\ExecutionYear;
 use App\Models\PlanDevelopmentCatalogItem;
+use App\Models\PrioridadEntidad;
 use App\Models\Producto;
+use App\Models\ProfesionalAmbiental;
 use App\Models\Project;
+use App\Models\ProjectStage;
+use App\Models\ProjectStatus;
 use App\Models\Secretaria;
 use App\Models\Sector;
 use App\Models\User;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -24,7 +30,9 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Closure;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -104,7 +112,12 @@ class ProjectResource extends Resource
                             ->required()
                             ->preload()
                             ->searchable()
-                            ->native(false),
+                            ->native(false)
+                            ->live(),
+                        Placeholder::make('municipio_tipos_hint')
+                            ->label('Tipología de municipios seleccionados')
+                            ->content(fn (Get $get): HtmlString => new HtmlString(static::municipioTypesHintHtml($get('municipio_ids') ?? [])))
+                            ->columnSpan(2),
                         Select::make('secretaria')
                             ->label('Secretaria')
                             ->options(fn (): array => static::activeSecretariaOptions())
@@ -125,7 +138,81 @@ class ProjectResource extends Resource
                             ->options(fn (): array => static::usersByRole('estructurador'))
                             ->getOptionLabelUsing(fn ($value): ?string => User::find($value)?->name)
                             ->searchable()
-                            ->preload(),
+                            ->preload()
+                            ->live(),
+                        TextInput::make('prioridad_estructurador')
+                            ->label('Tu prioridad')
+                            ->numeric()
+                            ->minValue(1)
+                            ->maxValue(9999)
+                            ->nullable()
+                            ->rule(function (Get $get, ?Project $record) {
+                                return function (string $attribute, $value, Closure $fail) use ($get, $record): void {
+                                    $prioridad = (int) $value;
+                                    $estructuradorId = (int) ($get('estructurador_id') ?? 0);
+                                    if ($prioridad <= 0 || $estructuradorId <= 0) {
+                                        return;
+                                    }
+
+                                    $exists = Project::query()
+                                        ->when(
+                                            $record?->id,
+                                            fn (Builder $q): Builder => $q->where('id', '<>', (int) $record->id)
+                                        )
+                                        ->where('estructurador_id', $estructuradorId)
+                                        ->where('prioridad_estructurador', $prioridad)
+                                        ->exists();
+
+                                    if ($exists) {
+                                        $fail('Ese estructurador ya tiene esa prioridad.');
+                                    }
+                                };
+                            })
+                            ->helperText('Exclusiva por estructurador. El valor 1 es la mayor prioridad.'),
+                        Select::make('prioridad_entidad_id')
+                            ->label('Prioridad entidad')
+                            ->options(fn (): array => static::prioridadEntidadOptions())
+                            ->searchable()
+                            ->preload()
+                            ->native(false),
+                        Select::make('profesional_ambiental_id')
+                            ->label('Profesional apoyo ambiental')
+                            ->options(fn (): array => static::activeAmbientalOptions())
+                            ->searchable()
+                            ->preload()
+                            ->native(false),
+                        Select::make('project_stage_id')
+                            ->label('Etapa')
+                            ->options(fn (): array => static::activeStageOptions())
+                            ->required()
+                            ->searchable()
+                            ->preload()
+                            ->native(false),
+                        Select::make('project_status_id')
+                            ->label('Estado')
+                            ->options(fn (): array => static::activeStatusOptions())
+                            ->required()
+                            ->searchable()
+                            ->preload()
+                            ->native(false)
+                            ->disabled(fn (): bool => !static::canManageProjectManualStatus())
+                            ->dehydrated(fn (): bool => static::canManageProjectManualStatus()),
+                        Select::make('execution_year_ids')
+                            ->label('Años de ejecución')
+                            ->options(fn (): array => static::activeExecutionYearOptions())
+                            ->multiple()
+                            ->searchable()
+                            ->preload()
+                            ->native(false),
+                        TextInput::make('duracion_meses')
+                            ->label('Duración (meses)')
+                            ->numeric()
+                            ->minValue(1)
+                            ->maxValue(1200),
+                        TextInput::make('poblacion_objetivo')
+                            ->label('Población objetivo')
+                            ->numeric()
+                            ->minValue(0),
                         Select::make('sector_principal_id')
                             ->label('Sector principal')
                             ->options(fn (): array => static::activeSectorOptions())
@@ -391,14 +478,30 @@ class ProjectResource extends Resource
             ->columns([
                 TextColumn::make('nombre')
                     ->label('Nombre clave')
-                    ->limit(34)
+                    ->limit(26)
                     ->wrap()
+                    ->description(function (Project $record): ?string {
+                        $prioridad = $record->prioridadEntidad;
+                        if (!$prioridad) {
+                            return 'P. entidad: Sin definir';
+                        }
+
+                        $icon = match ((int) $prioridad->numero) {
+                            1 => '🔴',
+                            2 => '🟠',
+                            3 => '🟡',
+                            4 => '🟢',
+                            default => '⚪',
+                        };
+
+                        return "P. entidad: {$icon} {$prioridad->numero} {$prioridad->nombre}";
+                    })
                     ->searchable()
                     ->sortable(),
                 TextColumn::make('municipios_display')
                     ->label('Municipios')
                     ->state(fn (Project $record): string => $record->municipios_display ?: '-')
-                    ->limit(28)
+                    ->limit(20)
                     ->wrap()
                     ->searchable(query: function (Builder $query, string $search): Builder {
                         return $query->where('municipio', 'like', "%{$search}%")
@@ -412,10 +515,12 @@ class ProjectResource extends Resource
                         default => (string) ($state ?: '-'),
                     })
                     ->badge()
+                    ->toggleable(isToggledHiddenByDefault: true)
                     ->sortable(),
                 TextColumn::make('valor')
                     ->label('Valor')
                     ->formatStateUsing(fn ($state): string => static::formatCurrencyForTable($state))
+                    ->toggleable(isToggledHiddenByDefault: true)
                     ->sortable(),
                 TextColumn::make('sectores.nombre')
                     ->label('Sectores')
@@ -436,6 +541,39 @@ class ProjectResource extends Resource
                 TextColumn::make('estructurador.name')
                     ->label('Estructurador')
                     ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('prioridad_estructurador')
+                    ->label('Tu prioridad')
+                    ->formatStateUsing(fn ($state): string => blank($state) ? '-' : ('P' . $state))
+                    ->badge()
+                    ->color(function ($state): string {
+                        $value = (int) $state;
+                        if ($value <= 0) {
+                            return 'gray';
+                        }
+                        if ($value === 1) {
+                            return 'danger';
+                        }
+                        if ($value === 2) {
+                            return 'warning';
+                        }
+                        if ($value === 3) {
+                            return 'success';
+                        }
+                        if ($value <= 5) {
+                            return 'info';
+                        }
+                        return 'gray';
+                    })
+                    ->sortable(),
+                TextColumn::make('prioridadEntidad.nombre')
+                    ->label('Prioridad entidad')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('stage.nombre')
+                    ->label('Etapa')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('status.nombre')
+                    ->label('Estado')
+                    ->badge(),
                 TextColumn::make('avance')
                     ->label('Avance')
                     ->state(function (Project $record): int {
@@ -460,6 +598,12 @@ class ProjectResource extends Resource
                 SelectFilter::make('sectores')
                     ->relationship('sectores', 'nombre')
                     ->label('Sector'),
+                SelectFilter::make('project_stage_id')
+                    ->label('Etapa')
+                    ->relationship('stage', 'nombre'),
+                SelectFilter::make('project_status_id')
+                    ->label('Estado')
+                    ->relationship('status', 'nombre'),
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
@@ -472,11 +616,13 @@ class ProjectResource extends Resource
                     ->icon('heroicon-o-folder')
                     ->url(fn (Project $record): string => static::getUrl('manage', ['record' => $record])),
             ])
+            ->recordUrl(fn (Project $record): string => static::getUrl('manage', ['record' => $record]))
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
                     Tables\Actions\DeleteBulkAction::make(),
                 ]),
-            ]);
+            ])
+            ->defaultSort('prioridad_estructurador', 'asc');
     }
 
     public static function getRelations(): array
@@ -489,7 +635,7 @@ class ProjectResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         $query = parent::getEloquentQuery()
-            ->with(['sectores', 'municipios', 'producto', 'formulador', 'estructurador'])
+            ->with(['sectores', 'municipios', 'producto', 'formulador', 'estructurador', 'prioridadEntidad', 'stage', 'status'])
             ->withCount('requisitos')
             ->withCount([
                 'evidences as evidencias_validas_count' => function ($query) {
@@ -505,14 +651,16 @@ class ProjectResource extends Resource
 
         // Admin, director y formulador maestro pueden ver todo el portafolio.
         if ($user->isAdminUser() || $user->hasAnyRole(['director', 'formulador_maestro'])) {
-            return $query;
+            return $query->orderByRaw('prioridad_estructurador IS NULL')
+                ->orderBy('prioridad_estructurador');
         }
 
         // El resto de roles operativos solo ve proyectos donde esté asignado.
         return $query->where(function (Builder $scoped) use ($user) {
             $scoped->where('formulador_id', $user->id)
                 ->orWhere('estructurador_id', $user->id);
-        });
+        })->orderByRaw('prioridad_estructurador IS NULL')
+            ->orderBy('prioridad_estructurador');
     }
 
 
@@ -559,6 +707,90 @@ class ProjectResource extends Resource
             ->orderBy('nombre')
             ->pluck('nombre', 'nombre')
             ->all();
+    }
+
+    protected static function prioridadEntidadOptions(): array
+    {
+        return PrioridadEntidad::query()
+            ->where('activo', true)
+            ->orderBy('numero')
+            ->get()
+            ->mapWithKeys(fn (PrioridadEntidad $item): array => [$item->id => "{$item->numero} {$item->nombre}"])
+            ->all();
+    }
+
+    protected static function activeAmbientalOptions(): array
+    {
+        return ProfesionalAmbiental::query()
+            ->where('activo', true)
+            ->orderBy('nombre')
+            ->pluck('nombre', 'id')
+            ->all();
+    }
+
+    protected static function activeStageOptions(): array
+    {
+        return ProjectStage::query()
+            ->where('activo', true)
+            ->orderBy('nombre')
+            ->pluck('nombre', 'id')
+            ->all();
+    }
+
+    protected static function activeStatusOptions(): array
+    {
+        return ProjectStatus::query()
+            ->where('activo', true)
+            ->orderBy('orden')
+            ->pluck('nombre', 'id')
+            ->all();
+    }
+
+    protected static function activeExecutionYearOptions(): array
+    {
+        return ExecutionYear::query()
+            ->where('activo', true)
+            ->orderBy('anio')
+            ->pluck('anio', 'id')
+            ->all();
+    }
+
+    protected static function canManageProjectManualStatus(): bool
+    {
+        $user = auth()->user();
+        return (bool) ($user && ($user->isAdminUser() || $user->hasRole('director')));
+    }
+
+    protected static function municipioTypesHintHtml(array $municipioIds): string
+    {
+        $ids = collect($municipioIds)->map(fn ($id) => (int) $id)->filter()->values();
+        if ($ids->isEmpty()) {
+            return '<span class="text-gray-500">Selecciona municipios para ver tipologías (PEDER, SOMAC, etc.).</span>';
+        }
+
+        $municipios = Municipio::query()
+            ->with(['tipos' => fn ($q) => $q->where('activo', true)->orderBy('nombre')])
+            ->whereIn('id', $ids->all())
+            ->orderBy('nombre')
+            ->get();
+
+        if ($municipios->isEmpty()) {
+            return '<span class="text-gray-500">Sin tipologías configuradas.</span>';
+        }
+
+        $rows = $municipios->map(function (Municipio $municipio): string {
+            $chips = $municipio->tipos->map(function ($tipo): string {
+                return '<span class="inline-flex items-center rounded-full bg-lime-100 px-2 py-0.5 text-[11px] font-semibold text-lime-800">' . e($tipo->nombre) . '</span>';
+            })->implode(' ');
+            if ($chips === '') {
+                $chips = '<span class="text-gray-400 text-xs">Sin tipología</span>';
+            }
+
+            return '<div class="flex flex-wrap items-center gap-2"><span class="text-sm font-medium text-gray-700">'
+                . e($municipio->nombre) . '</span>' . $chips . '</div>';
+        })->implode('');
+
+        return '<div class="space-y-1">' . $rows . '</div>';
     }
 
     protected static function activeMunicipioOptions(): array
@@ -736,6 +968,7 @@ class ProjectResource extends Resource
             'edit' => Pages\EditProject::route('/{record}/edit'),
             'checklist' => Pages\ManageProjectChecklist::route('/{record}/checklist'),
             'manage' => Pages\ManageProject::route('/{record}/manage'),
+            'review' => Pages\ReviewProject::route('/{record}/review'),
             'bank' => Pages\ManageProjectBank::route('/{record}/banco'),
             'attachments' => Pages\ManageProjectAttachments::route('/{record}/attachments-pdf'),
         ];

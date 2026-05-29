@@ -19,6 +19,15 @@ Route::get('/', function () {
     return view('welcome');
 });
 
+Route::get('/preview/email-welcome', function () {
+    return view('emails.user-welcome', [
+        'name' => 'Jonathan Jimenez',
+        'email' => 'joni051@aim.com',
+        'loginUrl' => url('/panel/login'),
+        'logoUrl' => url('/img/logo.jpg'),
+    ]);
+});
+
 Route::middleware('guest')->get('/login', function () {
     return redirect('/panel/login');
 });

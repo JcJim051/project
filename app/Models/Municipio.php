@@ -22,4 +22,9 @@ class Municipio extends Model
     {
         return $this->belongsToMany(Project::class, 'municipio_project');
     }
+
+    public function tipos()
+    {
+        return $this->belongsToMany(MunicipioTipo::class, 'municipio_municipio_tipo');
+    }
 }

@@ -8,6 +8,7 @@ use App\Services\GoogleDriveService;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\HtmlString;
 use Illuminate\View\View;
 
 class ManageProject extends Page
@@ -61,6 +62,7 @@ class ManageProject extends Page
                 'canAuthorizeTransfer' => $data['canAuthorizeTransfer'] ?? false,
                 'canAcknowledgeTransfer' => $data['canAcknowledgeTransfer'] ?? false,
                 'transferReceiptStates' => $data['transferReceiptStates'] ?? [],
+                'mgaUrl' => $this->getMgaUrl(),
             ];
         }
     }
@@ -70,15 +72,50 @@ class ManageProject extends Page
         return $this->viewData;
     }
 
-    public function getHeading(): string
+    public function getHeading(): string|HtmlString
     {
         $name = $this->record?->nombre_clave ?: $this->record?->nombre ?: 'Proyecto';
+        $heading = 'Gestionar: ' . e($name);
+        $mgaUrl = $this->getMgaUrl();
 
-        return 'Gestionar: ' . $name;
+        if (!$mgaUrl) {
+            return $heading;
+        }
+
+        return new HtmlString(
+            $heading
+            . ' <a href="' . e($mgaUrl) . '" target="_blank" rel="noopener"'
+            . ' style="margin-left:8px;display:inline-flex;align-items:center;padding:2px 8px;border:1px solid #86efac;border-radius:6px;background:#ecfdf5;color:#15803d;font-size:12px;font-weight:600;text-decoration:none;">MGA</a>'
+        );
     }
 
     public function getManageUrl(): string
     {
         return route('projects.manage.legacy', $this->record);
+    }
+
+    private function getMgaUrl(): ?string
+    {
+        $projectId = trim((string) ($this->record->id_proyecto ?? ''));
+        if ($projectId === '') {
+            return null;
+        }
+
+        // Accept multiple possible attribute names for compatibility.
+        $alternativeId = trim((string) (
+            $this->record->mga_alternative_id
+            ?? $this->record->alternative_id
+            ?? $this->record->ap35
+            ?? ''
+        ));
+
+        if ($alternativeId !== '') {
+            return 'https://mgaweb.dnp.gov.co/Preparation/PE05?ProjectId='
+                . urlencode($projectId)
+                . '&AlternativeId='
+                . urlencode($alternativeId);
+        }
+
+        return 'https://mgaweb.dnp.gov.co/Identification/Id01?ProjectId=' . urlencode($projectId);
     }
 }
