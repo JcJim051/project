@@ -449,6 +449,7 @@ class GoogleDriveService
         }
 
         $parentFolderId = $parentFolderId ?: (string) config('services.google.projects_root_folder_id', '');
+        $parentFolderId = $this->resolveBankProjectsParentFolderId($parentFolderId, $userId);
         $baseFolders = $subfolders ?: (array) config('services.google.project_base_folders', [
             '01 Estructuracion',
             '02 Cargue',
@@ -510,6 +511,27 @@ class GoogleDriveService
             'url' => 'https://drive.google.com/drive/folders/' . $rootId,
             'created_subfolders' => $createdSubfolders,
         ];
+    }
+
+    private function resolveBankProjectsParentFolderId(string $rootFolderId, ?int $userId = null): string
+    {
+        $rootFolderId = trim($rootFolderId);
+        if ($rootFolderId === '') {
+            throw new \RuntimeException("No se pudo resolver la carpeta padre '01 Banco de Proyectos' en Drive.");
+        }
+
+        $bankFolderName = '01 Banco de Proyectos';
+        $existing = $this->findDirectChildFolderIdByName($rootFolderId, $bankFolderName, $userId);
+        if (is_string($existing) && $existing !== '') {
+            return $existing;
+        }
+
+        $created = $this->createChildFolder($rootFolderId, $bankFolderName, $userId);
+        if (is_string($created) && $created !== '') {
+            return $created;
+        }
+
+        throw new \RuntimeException("No se pudo resolver la carpeta padre '01 Banco de Proyectos' en Drive.");
     }
 
     public function uploadLocalFileToFolder(
