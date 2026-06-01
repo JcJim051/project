@@ -9,25 +9,29 @@ class DriveAuthController extends Controller
 {
     public function redirect(Request $request, GoogleDriveService $drive)
     {
-        $userId = $request->user()?->id ?: session('drive_auth_user_id');
+        $user = $request->user();
+        if (!$user || !$user->isAdminUser()) {
+            abort(403, 'Solo administración puede conectar Drive.');
+        }
+
         $returnUrl = $request->query('return');
 
         if (!$drive->isConfigured()) {
             return redirect()->back()->withErrors(['drive' => 'Faltan las credenciales de Google Drive en el .env.']);
         }
 
-        if ($userId) {
-            session(['drive_auth_user_id' => $userId]);
-        }
-
-        $url = $drive->getAuthUrl($userId, $returnUrl);
+        $url = $drive->getAuthUrl(null, $returnUrl);
 
         return redirect()->away($url);
     }
 
     public function callback(Request $request, GoogleDriveService $drive)
     {
-        $userId = $request->user()?->id ?: session('drive_auth_user_id');
+        $user = $request->user();
+        if (!$user || !$user->isAdminUser()) {
+            abort(403, 'Solo administración puede conectar Drive.');
+        }
+
         $code = $request->query('code');
         $oauthError = $request->query('error');
 
@@ -42,10 +46,10 @@ class DriveAuthController extends Controller
         }
 
         try {
-            $drive->handleCallback($code, $userId);
+            $drive->handleCallback($code, null);
         } catch (\Throwable $e) {
             report($e);
-            session()->forget(['drive_return_url', 'drive_auth_user_id']);
+            session()->forget(['drive_return_url']);
 
             return redirect()->route('projects.index')->withErrors([
                 'drive' => 'No se pudo completar la conexión con Google Drive. ' .
@@ -54,7 +58,7 @@ class DriveAuthController extends Controller
         }
 
         $returnUrl = session('drive_return_url', route('projects.index'));
-        session()->forget(['drive_return_url', 'drive_auth_user_id']);
+        session()->forget(['drive_return_url']);
 
         return redirect($returnUrl)->with('status', 'Drive conectado correctamente.');
     }

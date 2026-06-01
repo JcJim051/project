@@ -35,7 +35,7 @@ class GoogleDriveService
             return false;
         }
 
-        return Storage::disk('local')->exists($this->tokenPath($userId));
+        return Storage::disk('local')->exists($this->tokenPath());
     }
 
     public function getAuthUrl(?int $userId = null, ?string $returnUrl = null): string
@@ -671,10 +671,7 @@ class GoogleDriveService
 
     private function tokenPath(?int $userId = null): string
     {
-        if ($userId) {
-            return "google-drive-token-{$userId}.json";
-        }
-
+        // Connection is global for the whole platform (admin-owned token).
         return 'google-drive-token.json';
     }
 

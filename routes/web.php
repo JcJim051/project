@@ -35,10 +35,15 @@ Route::middleware('guest')->get('/login', function () {
 Route::middleware([
     'auth',
     'verified',
+    'admin',
 ])->get('/drive/auth', [DriveAuthController::class, 'redirect'])->name('drive.auth');
 
-Route::match(['get', 'post'], '/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback');
-Route::match(['get', 'post'], '/panel/drive/callback', [DriveAuthController::class, 'callback'])->name('drive.callback.panel');
+Route::middleware(['auth', 'verified', 'admin'])
+    ->match(['get', 'post'], '/drive/callback', [DriveAuthController::class, 'callback'])
+    ->name('drive.callback');
+Route::middleware(['auth', 'verified', 'admin'])
+    ->match(['get', 'post'], '/panel/drive/callback', [DriveAuthController::class, 'callback'])
+    ->name('drive.callback.panel');
 
 Route::middleware([
     'auth',

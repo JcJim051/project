@@ -123,9 +123,9 @@ class DriveOAuthSettings extends Page implements HasForms
     private function refreshDriveStatus(GoogleDriveService $driveService): void
     {
         $this->isDriveConfigured = $driveService->isConfigured();
-        $this->isDriveConnected = $driveService->isAuthorized(auth()->id());
+        $this->isDriveConnected = $driveService->isAuthorized();
 
-        $tokenPath = storage_path('app/google-drive-token-' . auth()->id() . '.json');
+        $tokenPath = storage_path('app/google-drive-token.json');
         $this->tokenUpdatedAt = is_file($tokenPath) ? date('Y-m-d H:i:s', (int) filemtime($tokenPath)) : null;
     }
 

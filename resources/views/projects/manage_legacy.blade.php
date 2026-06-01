@@ -500,12 +500,16 @@
                 </div>
             @endif
 
-            @if (!$driveConnected)
+            @if (!$driveConnected && auth()->user()?->isAdminUser())
                 <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm flex items-center justify-between">
                     <span>Conecta Google Drive para sincronizar evidencias automaticamente.</span>
                     <a href="{{ route('drive.auth', ['return' => route('projects.manage', $project)]) }}" class="text-amber-700 font-semibold hover:text-amber-800">
                         Conectar Drive
                     </a>
+                </div>
+            @elseif (!$driveConnected)
+                <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm">
+                    Google Drive no está conectado por administración. Solicita al administrador conectar Drive para habilitar carga y sincronización.
                 </div>
             @elseif (!$project->drive_folder_id)
                 <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm">
