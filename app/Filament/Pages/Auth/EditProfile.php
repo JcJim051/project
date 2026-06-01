@@ -56,7 +56,9 @@ class EditProfile extends BaseEditProfile
                             ->revealable(filament()->arePasswordsRevealable())
                             ->dehydrated(false)
                             ->autocomplete('current-password')
-                            ->helperText('Requerida para cambiar la contraseña.'),
+                            ->helperText(fn (): string => (bool) auth()->user()?->must_change_password
+                                ? 'En primer ingreso no se requiere contraseña actual.'
+                                : 'Requerida para cambiar la contraseña.'),
                         $this->getPasswordFormComponent(),
                         $this->getPasswordConfirmationFormComponent(),
                     ])
@@ -91,7 +93,7 @@ class EditProfile extends BaseEditProfile
             ]);
         }
 
-        if ($isChangingPassword && !Hash::check($currentPassword, (string) $record->password)) {
+        if ($isChangingPassword && ! $isFirstAccessForced && !Hash::check($currentPassword, (string) $record->password)) {
             throw ValidationException::withMessages([
                 'data.current_password' => 'La contraseña actual no es correcta.',
             ]);
