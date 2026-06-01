@@ -20,6 +20,7 @@ class ForcePasswordChange
         $allowedRoutes = [
             'filament.admin.auth.profile',
             'filament.admin.auth.logout',
+            'default.livewire.update',
             'livewire.update',
             'livewire.message',
             'livewire.upload-file',

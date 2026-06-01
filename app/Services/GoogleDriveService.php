@@ -448,8 +448,12 @@ class GoogleDriveService
             throw new \InvalidArgumentException('El nombre del proyecto para Drive no puede estar vacío.');
         }
 
-        $parentFolderId = $parentFolderId ?: (string) config('services.google.projects_root_folder_id', '');
-        $parentFolderId = $this->resolveBankProjectsParentFolderId($parentFolderId, $userId);
+        $oauth = $this->oauthCredentials();
+        $parentFolderId = $parentFolderId ?: (string) ($oauth['projects_root_folder_id'] ?? config('services.google.projects_root_folder_id', ''));
+        $parentFolderId = trim((string) $parentFolderId);
+        if ($parentFolderId === '') {
+            throw new \RuntimeException('No hay carpeta raíz de proyectos configurada en Drive OAuth.');
+        }
         $baseFolders = $subfolders ?: (array) config('services.google.project_base_folders', [
             '01 Estructuracion',
             '02 Cargue',
@@ -511,27 +515,6 @@ class GoogleDriveService
             'url' => 'https://drive.google.com/drive/folders/' . $rootId,
             'created_subfolders' => $createdSubfolders,
         ];
-    }
-
-    private function resolveBankProjectsParentFolderId(string $rootFolderId, ?int $userId = null): string
-    {
-        $rootFolderId = trim($rootFolderId);
-        if ($rootFolderId === '') {
-            throw new \RuntimeException("No se pudo resolver la carpeta padre '01 Banco de Proyectos' en Drive.");
-        }
-
-        $bankFolderName = '01 Banco de Proyectos';
-        $existing = $this->findDirectChildFolderIdByName($rootFolderId, $bankFolderName, $userId);
-        if (is_string($existing) && $existing !== '') {
-            return $existing;
-        }
-
-        $created = $this->createChildFolder($rootFolderId, $bankFolderName, $userId);
-        if (is_string($created) && $created !== '') {
-            return $created;
-        }
-
-        throw new \RuntimeException("No se pudo resolver la carpeta padre '01 Banco de Proyectos' en Drive.");
     }
 
     public function uploadLocalFileToFolder(
@@ -665,6 +648,7 @@ class GoogleDriveService
                 'client_id' => config('services.google.client_id'),
                 'client_secret' => config('services.google.client_secret'),
                 'redirect' => config('services.google.redirect'),
+                'projects_root_folder_id' => config('services.google.projects_root_folder_id'),
             ];
 
             try {
@@ -677,6 +661,7 @@ class GoogleDriveService
                     'client_id' => $setting->client_id ?: $fallback['client_id'],
                     'client_secret' => $setting->client_secret ?: $fallback['client_secret'],
                     'redirect' => $setting->redirect_uri ?: $fallback['redirect'],
+                    'projects_root_folder_id' => $setting->projects_root_folder_id ?: $fallback['projects_root_folder_id'],
                 ];
             } catch (\Throwable $e) {
                 return $fallback;

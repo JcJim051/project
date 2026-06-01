@@ -12,6 +12,7 @@ class DriveOAuthSetting extends Model
         'client_id',
         'client_secret',
         'redirect_uri',
+        'projects_root_folder_id',
         'updated_by',
     ];
 
@@ -20,4 +21,3 @@ class DriveOAuthSetting extends Model
         'client_secret' => 'encrypted',
     ];
 }
-

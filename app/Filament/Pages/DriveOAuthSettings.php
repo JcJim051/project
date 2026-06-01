@@ -47,6 +47,7 @@ class DriveOAuthSettings extends Page implements HasForms
             'client_id' => $active['client_id'] ?? ($setting?->client_id ?? ''),
             'client_secret' => $active['client_secret'] ?? ($setting?->client_secret ?? ''),
             'redirect_uri' => $active['redirect'] ?? ($setting?->redirect_uri ?? ''),
+            'projects_root_folder_id' => $active['projects_root_folder_id'] ?? ($setting?->projects_root_folder_id ?? ''),
         ]);
     }
 
@@ -70,6 +71,11 @@ class DriveOAuthSettings extends Page implements HasForms
                     ->required()
                     ->url()
                     ->maxLength(1000),
+                TextInput::make('projects_root_folder_id')
+                    ->label('ID carpeta raíz de proyectos (Drive)')
+                    ->helperText('Aquí se crearán los proyectos automáticamente, dentro de 01 Banco de Proyectos.')
+                    ->required()
+                    ->maxLength(255),
             ]);
     }
 
