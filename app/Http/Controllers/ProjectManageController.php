@@ -13,6 +13,7 @@ use App\Services\RequirementProgressService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 use Carbon\Carbon;
 
@@ -138,6 +139,111 @@ class ProjectManageController extends Controller
             'canAuthorizeTransfer' => $canAuthorizeTransfer,
             'canAcknowledgeTransfer' => $canAcknowledgeTransfer,
             'transferReceiptStates' => $transferReceiptStates,
+        ]);
+    }
+
+
+    public function storeCustomCertification(Request $request, Project $project, GoogleDriveService $drive)
+    {
+        $this->authorizeProjectMutation();
+
+        @ini_set('max_execution_time', '0');
+        set_time_limit(0);
+
+        $data = $request->validate([
+            'nombre_certificacion' => ['required', 'string', 'max:180'],
+            'archivo' => ['nullable', 'file', 'max:51200'],
+        ], [
+            'nombre_certificacion.required' => 'Escribe el nombre de la certificación.',
+            'archivo.max' => 'El archivo debe pesar máximo 50MB.',
+        ]);
+
+        $name = $this->cleanCustomCertificationName((string) $data['nombre_certificacion']);
+        if ($name === '') {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Escribe un nombre válido para la certificación.',
+            ], 422);
+        }
+
+        if ($request->hasFile('archivo')) {
+            if (!$project->drive_folder_id) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'El proyecto no tiene carpeta de Drive configurada para cargar el archivo.',
+                ], 422);
+            }
+
+            if (!$drive->isAuthorized(auth()->id())) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Drive no está conectado para cargar el archivo.',
+                ], 422);
+            }
+        }
+
+        $normalizedName = $this->normalizeCustomCertificationName($name);
+        $duplicate = $project->requisitos()
+            ->where('requirements.carpeta', '3.3 Otras Certificaciones')
+            ->where('requirements.visible', true)
+            ->get(['requirements.id', 'requirements.nombre_documento', 'requirements.requisito'])
+            ->first(function (Requirement $requirement) use ($normalizedName) {
+                $candidate = (string) ($requirement->nombre_documento ?: $requirement->requisito);
+                return $this->normalizeCustomCertificationName($candidate) === $normalizedName;
+            });
+
+        if ($duplicate) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Ya existe una certificación libre con ese nombre en este proyecto.',
+            ], 422);
+        }
+
+        $nextOrder = (string) ((int) Requirement::query()
+            ->where('custom_project_id', $project->id)
+            ->where('carpeta', '3.3 Otras Certificaciones')
+            ->max('orden') + 1);
+
+        $requirement = Requirement::query()->create([
+            'codigo_norma' => null,
+            'codigo_interno' => '3.3',
+            'custom_project_id' => $project->id,
+            'texto' => $name,
+            'sector' => null,
+            'tipo' => 'Certificación',
+            'requiere_check' => 'SI',
+            'orden' => $nextOrder,
+            'literal' => null,
+            'numeracion' => '3.3',
+            'requisito' => $name,
+            'nombre_documento' => $name,
+            'carpeta' => '3.3 Otras Certificaciones',
+            'origen' => 'custom_certification',
+            'visible' => true,
+        ]);
+
+        $project->requisitos()->syncWithoutDetaching([$requirement->id]);
+
+        $uploaded = null;
+        if ($request->hasFile('archivo')) {
+            $file = $request->file('archivo');
+            $extension = $file?->getClientOriginalExtension();
+            $targetName = $this->customCertificationFileName($name, $extension ?: null);
+            try {
+                $uploaded = $drive->uploadEvidence($project, $requirement, $file, $targetName, auth()->id());
+            } catch (\Throwable $e) {
+                return response()->json([
+                    'ok' => true,
+                    'message' => 'La certificación fue creada, pero no se pudo cargar el archivo inicial: ' . $e->getMessage(),
+                    'requirement_id' => $requirement->id,
+                ]);
+            }
+        }
+
+        return response()->json([
+            'ok' => true,
+            'message' => $uploaded ? 'Certificación creada y archivo cargado.' : 'Certificación creada. Ahora puedes cargar su evidencia.',
+            'requirement_id' => $requirement->id,
         ]);
     }
 
@@ -293,6 +399,38 @@ class ProjectManageController extends Controller
         return back()->with('status', 'Evidencias cargadas en Drive.');
     }
 
+
+    private function cleanCustomCertificationName(string $value): string
+    {
+        $value = preg_replace('/\s+/', ' ', trim($value));
+        $value = trim((string) $value, " \t\n\r\0\x0B.-_");
+        return $value;
+    }
+
+    private function normalizeCustomCertificationName(string $value): string
+    {
+        $value = Str::ascii($value);
+        $value = mb_strtolower($value);
+        $value = preg_replace('/[^a-z0-9]+/', ' ', $value);
+        $value = preg_replace('/\s+/', ' ', $value);
+        return trim((string) $value);
+    }
+
+    private function customCertificationFileName(string $name, ?string $extension): string
+    {
+        $base = str_replace(['ñ', 'Ñ'], ['n', 'N'], $name);
+        $base = Str::ascii($base);
+        $base = preg_replace('/[^A-Za-z0-9 _.-]+/', '', $base);
+        $base = preg_replace('/\s+/', ' ', trim((string) $base));
+        $base = trim((string) $base, ' ._-');
+        if ($base === '') {
+            $base = 'certificacion';
+        }
+
+        $extension = mb_strtolower(trim((string) $extension, '. '));
+        return $extension !== '' ? $base . '.' . $extension : $base;
+    }
+
     private function uploadErrorResponse(bool $expectsJson, int $status, string $code, string $message)
     {
         if ($expectsJson) {
@@ -424,6 +562,7 @@ class ProjectManageController extends Controller
         $requirements = $project->requisitos()
             ->where('requirements.visible', true)
             ->orderBy('carpeta')
+            ->orderByRaw('custom_project_id IS NOT NULL')
             ->orderBy('orden')
             ->orderBy('codigo_interno')
             ->orderBy('nombre_documento')

@@ -62,6 +62,7 @@ Route::middleware([
 
     Route::get('/projects/{project}/manage', [ProjectManageController::class, 'show'])->name('projects.manage');
     Route::post('/projects/{project}/manage/renumber', [ProjectManageController::class, 'renumberUploads'])->name('projects.manage.renumber');
+    Route::post('/projects/{project}/manage/custom-certifications', [ProjectManageController::class, 'storeCustomCertification'])->name('projects.manage.custom_certifications.store');
     Route::post('/projects/{project}/manage/{requirement}', [ProjectManageController::class, 'upload'])->name('projects.manage.upload');
     Route::get('/projects/{project}/drive/files', [ProjectDriveEvidenceController::class, 'listFiles'])->name('projects.drive.files');
     Route::post('/projects/{project}/requirements/{requirement}/link-drive-file', [ProjectDriveEvidenceController::class, 'linkFile'])->name('projects.requirements.link_drive_file');

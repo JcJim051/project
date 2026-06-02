@@ -183,6 +183,7 @@ class ProjectTransferReviewController extends Controller
         $requirements = $project->requisitos()
             ->where('requirements.visible', true)
             ->orderBy('carpeta')
+            ->orderByRaw('custom_project_id IS NOT NULL')
             ->orderBy('orden')
             ->orderBy('codigo_interno')
             ->orderBy('nombre_documento')

@@ -433,6 +433,11 @@
                 deleteConfirmText: '',
                 deleteConfirmBusy: false,
                 deleteConfirmError: '',
+                customCertificationUrl: @js(route('projects.manage.custom_certifications.store', $project)),
+                customCertificationOpen: false,
+                customCertificationName: '',
+                customCertificationBusy: false,
+                customCertificationError: '',
                 init() {
                     this.selectInitial();
                 },
@@ -479,6 +484,12 @@
                     const group = this.currentGroup();
                     if (!group) return null;
                     return this.subgroupByKey(group, this.selectedSubgroupKey);
+                },
+                isOtherCertificationsSubgroup() {
+                    const subgroup = this.currentSubgroup();
+                    if (!subgroup || this.selectedGroupCode !== '03') return false;
+                    const name = this.normalizeText(subgroup.name || '');
+                    return name.includes('3 3 otras certificaciones') || name.includes('otras certificaciones');
                 },
                 selectInitial() {
                     const firstGroup = this.groups.find(g => (g.subgroups || []).length > 0);
@@ -920,6 +931,60 @@
                     if (valid.some(e => String(e.source || '').toLowerCase() === 'upload')) return 'upload';
                     return 'none';
                 },
+                openCustomCertificationModal() {
+                    this.customCertificationOpen = true;
+                    this.customCertificationName = '';
+                    this.customCertificationError = '';
+                    this.customCertificationBusy = false;
+                    this.$nextTick(() => {
+                        if (this.$refs.customCertificationName) this.$refs.customCertificationName.focus();
+                    });
+                },
+                closeCustomCertificationModal() {
+                    if (this.customCertificationBusy) return;
+                    this.customCertificationOpen = false;
+                    this.customCertificationName = '';
+                    this.customCertificationError = '';
+                    if (this.$refs.customCertificationFile) this.$refs.customCertificationFile.value = '';
+                },
+                async submitCustomCertification() {
+                    const name = (this.customCertificationName || '').trim();
+                    if (!name || this.customCertificationBusy) {
+                        this.customCertificationError = 'Escribe el nombre de la certificación.';
+                        return;
+                    }
+
+                    const formData = new FormData();
+                    formData.append('nombre_certificacion', name);
+                    const fileInput = this.$refs.customCertificationFile;
+                    if (fileInput && fileInput.files && fileInput.files.length > 0) {
+                        formData.append('archivo', fileInput.files[0]);
+                    }
+
+                    this.customCertificationBusy = true;
+                    this.customCertificationError = '';
+                    try {
+                        const response = await fetch(this.customCertificationUrl, {
+                            method: 'POST',
+                            body: formData,
+                            headers: {
+                                'Accept': 'application/json',
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'X-CSRF-TOKEN': this.csrfToken,
+                            },
+                            credentials: 'same-origin',
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok || !data.ok) {
+                            throw new Error(data.message || 'No se pudo crear la certificación.');
+                        }
+                        window.location.reload();
+                    } catch (error) {
+                        this.customCertificationError = error.message || 'No se pudo crear la certificación.';
+                    } finally {
+                        this.customCertificationBusy = false;
+                    }
+                },
                 async uploadCurrentRequirement(event) {
                     const req = this.currentRequirement();
                     if (!req || this.uploadBusy) return;
@@ -1209,7 +1274,16 @@
                                 <div class="pane-body">
                                     <div class="pane-inner" :class="toneClass()">
                                     <template x-if="currentSubgroup()">
-                                        <div class="text-xs text-gray-600 mb-2" x-text="currentSubgroup().name"></div>
+                                        <div class="mb-2 flex items-center justify-between gap-2">
+                                            <div class="text-xs text-gray-600" x-text="currentSubgroup().name"></div>
+                                            <button
+                                                type="button"
+                                                x-show="isOtherCertificationsSubgroup()"
+                                                @click="openCustomCertificationModal()"
+                                                class="h-8 rounded-md border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-700 hover:bg-amber-100">
+                                                Agregar certificación
+                                            </button>
+                                        </div>
                                     </template>
                                     <template x-if="visibleRequirementsInSelectedSubgroup().length === 0">
                                         <div class="text-sm text-gray-500">No hay requisitos en el subgrupo seleccionado.</div>
@@ -1355,6 +1429,49 @@
                         </section>
                     </div>
                 @endif
+            </div>
+
+
+            <div x-show="customCertificationOpen" x-cloak @click.self="closeCustomCertificationModal()" x-on:keydown.escape.window="closeCustomCertificationModal()" class="gp-modal-overlay">
+                <div class="gp-modal-card">
+                    <div class="gp-modal-head px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                        <div class="text-sm font-semibold text-gray-800">Agregar certificación libre</div>
+                        <button type="button" @click="closeCustomCertificationModal()" class="text-xs text-gray-500 hover:text-gray-700">Cerrar</button>
+                    </div>
+                    <div class="gp-modal-body p-4 space-y-3">
+                        <div class="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                            Se creará un requisito propio de este proyecto en <strong>3.3 Otras Certificaciones</strong> y contará en el avance.
+                        </div>
+                        <label class="block">
+                            <span class="text-xs font-semibold text-gray-700">Nombre de la certificación</span>
+                            <input
+                                type="text"
+                                x-ref="customCertificationName"
+                                x-model="customCertificationName"
+                                class="mt-1 w-full rounded-md border-gray-300 text-sm"
+                                maxlength="180"
+                                placeholder="Ej: Certificación de no riesgo">
+                        </label>
+                        <label class="block">
+                            <span class="text-xs font-semibold text-gray-700">Archivo inicial (opcional)</span>
+                            <input
+                                type="file"
+                                x-ref="customCertificationFile"
+                                class="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-xs text-gray-700">
+                        </label>
+                        <div x-show="customCertificationError" x-cloak class="rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700" x-text="customCertificationError"></div>
+                    </div>
+                    <div class="gp-modal-foot px-4 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                        <button type="button" @click="closeCustomCertificationModal()" :disabled="customCertificationBusy" class="h-8 px-3 rounded-md border border-gray-300 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancelar</button>
+                        <button
+                            type="button"
+                            @click="submitCustomCertification()"
+                            :disabled="customCertificationBusy"
+                            class="h-9 px-4 rounded-md border border-amber-200 bg-amber-50 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50">
+                            <span x-text="customCertificationBusy ? 'Creando...' : 'Crear certificación'"></span>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div x-show="drivePickerOpen" x-cloak @click.self="closeDrivePicker()" x-on:keydown.escape.window="closeDrivePicker()" class="gp-modal-overlay">

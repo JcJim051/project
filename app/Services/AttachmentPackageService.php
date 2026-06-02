@@ -121,6 +121,7 @@ class AttachmentPackageService
             ->whereNotNull('drive_file_id')
             ->with('requirement')
             ->get();
+        $knownDriveFileIds = $evidences->pluck('drive_file_id')->filter()->map(fn ($id) => (string) $id)->all();
         $totalEvidence = max(1, $evidences->count());
         $processedEvidence = 0;
         $downloadErrors = [];
@@ -181,6 +182,16 @@ class AttachmentPackageService
             ];
         }
 
+        $this->appendOtherCertificationsDriveFiles(
+            $project,
+            $downloadDir,
+            $userId,
+            $documents,
+            $usedBaseNames,
+            $knownDriveFileIds,
+            $downloadErrors
+        );
+
         if (!empty($downloadErrors)) {
             $meta = is_array($run->meta) ? $run->meta : [];
             $meta['download_errors'] = $downloadErrors;
@@ -190,6 +201,118 @@ class AttachmentPackageService
         }
 
         return $documents;
+    }
+
+
+    private function appendOtherCertificationsDriveFiles(
+        Project $project,
+        string $downloadDir,
+        ?int $userId,
+        array &$documents,
+        array &$usedBaseNames,
+        array $knownDriveFileIds,
+        array &$downloadErrors
+    ): void {
+        $requirement = $project->requisitos->first(function ($req) {
+            return $this->normalizeFolderLabel((string) ($req->carpeta ?? '')) === $this->normalizeFolderLabel('3.3 Otras Certificaciones');
+        });
+
+        if (!$requirement) {
+            return;
+        }
+
+        try {
+            $result = $this->drive()->listRequirementFiles($project, $requirement, $userId, null, null);
+        } catch (\Throwable $e) {
+            $downloadErrors[] = [
+                'file_id' => null,
+                'file_name' => '3.3 Otras Certificaciones',
+                'error' => 'No se pudo listar la carpeta completa: ' . $e->getMessage(),
+            ];
+            return;
+        }
+
+        $known = array_fill_keys($knownDriveFileIds, true);
+        $filesToAppend = collect($result['items'] ?? [])
+            ->filter(fn (array $file) => !empty($file['id']) && !isset($known[(string) $file['id']]))
+            ->values();
+
+        if ($filesToAppend->isEmpty()) {
+            return;
+        }
+
+        $title = '3.3 Otras Certificaciones';
+        $docIndex = null;
+        foreach ($documents as $index => $document) {
+            if ($this->normalizeFolderLabel((string) ($document['title'] ?? '')) === $this->normalizeFolderLabel($title)) {
+                $docIndex = $index;
+                break;
+            }
+        }
+
+        if ($docIndex === null) {
+            $safeBaseName = $this->uniqueBaseName($title, '03', '3.3 Otras Certificaciones', $usedBaseNames);
+            $documents[] = [
+                'title' => $title,
+                'base_name' => $safeBaseName,
+                'files' => [],
+            ];
+            $docIndex = count($documents) - 1;
+        }
+
+        $docDir = $downloadDir . '/' . $documents[$docIndex]['base_name'];
+        File::ensureDirectoryExists($docDir);
+        $usedNames = collect($documents[$docIndex]['files'] ?? [])
+            ->pluck('name')
+            ->map(fn ($name) => mb_strtolower((string) $name))
+            ->flip()
+            ->all();
+
+        foreach ($filesToAppend as $index => $file) {
+            $original = (string) ($file['name'] ?? ('archivo_3_3_' . $index));
+            $safeName = $this->sanitizeFileName($original);
+            $safeName = $this->uniqueFileName($safeName, $usedNames);
+            $localPath = $docDir . '/' . $safeName;
+
+            try {
+                $this->drive()->downloadFile((string) $file['id'], $localPath, $userId);
+                $documents[$docIndex]['files'][] = [
+                    'name' => $safeName,
+                    'path' => $localPath,
+                ];
+            } catch (\Throwable $e) {
+                $downloadErrors[] = [
+                    'file_id' => (string) ($file['id'] ?? ''),
+                    'file_name' => $original,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+    }
+
+    private function uniqueFileName(string $safeName, array &$usedNames): string
+    {
+        $candidate = $safeName;
+        $extension = pathinfo($safeName, PATHINFO_EXTENSION);
+        $base = pathinfo($safeName, PATHINFO_FILENAME);
+        $counter = 2;
+        while (isset($usedNames[mb_strtolower($candidate)])) {
+            $candidate = $extension !== ''
+                ? $base . '_' . $counter . '.' . $extension
+                : $base . '_' . $counter;
+            $counter++;
+        }
+        $usedNames[mb_strtolower($candidate)] = true;
+        return $candidate;
+    }
+
+    private function normalizeFolderLabel(string $value): string
+    {
+        $value = Str::ascii($value);
+        $value = mb_strtolower($value);
+        $value = preg_replace('/[^a-z0-9.]+/', ' ', $value);
+        $value = preg_replace('/\s+/', ' ', $value);
+        return trim((string) $value);
     }
 
     private function resolveDocumentTitle(string $groupCode, string $subgroup): string

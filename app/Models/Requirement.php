@@ -14,6 +14,7 @@ class Requirement extends Model
         'codigo_norma',
         'codigo_interno',
         'parent_id',
+        'custom_project_id',
         'texto',
         'sector',
         'tipo',
@@ -31,6 +32,11 @@ class Requirement extends Model
     public function proyectos()
     {
         return $this->belongsToMany(Project::class, 'project_requirement');
+    }
+
+    public function customProject()
+    {
+        return $this->belongsTo(Project::class, 'custom_project_id');
     }
 
     public function evidences()

@@ -16,7 +16,12 @@ class ChecklistController extends Controller
 
         $requirements = Requirement::query()
             ->where('visible', true)
+            ->where(function ($query) use ($project) {
+                $query->whereNull('custom_project_id')
+                    ->orWhere('custom_project_id', $project->id);
+            })
             ->orderBy('carpeta')
+            ->orderByRaw('custom_project_id IS NOT NULL')
             ->orderBy('orden')
             ->orderBy('codigo_interno')
             ->orderBy('nombre_documento')
