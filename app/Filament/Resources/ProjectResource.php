@@ -970,6 +970,7 @@ class ProjectResource extends Resource
             'manage' => Pages\ManageProject::route('/{record}/manage'),
             'review' => Pages\ReviewProject::route('/{record}/review'),
             'bank' => Pages\ManageProjectBank::route('/{record}/banco'),
+            'documents' => Pages\ManageProjectDocuments::route('/{record}/documents'),
             'attachments' => Pages\ManageProjectAttachments::route('/{record}/attachments-pdf'),
         ];
     }

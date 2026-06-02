@@ -75,18 +75,7 @@ class ManageProject extends Page
     public function getHeading(): string|HtmlString
     {
         $name = $this->record?->nombre_clave ?: $this->record?->nombre ?: 'Proyecto';
-        $heading = 'Gestionar: ' . e($name);
-        $mgaUrl = $this->getMgaUrl();
-
-        if (!$mgaUrl) {
-            return $heading;
-        }
-
-        return new HtmlString(
-            $heading
-            . ' <a href="' . e($mgaUrl) . '" target="_blank" rel="noopener"'
-            . ' style="margin-left:8px;display:inline-flex;align-items:center;padding:2px 8px;border:1px solid #86efac;border-radius:6px;background:#ecfdf5;color:#15803d;font-size:12px;font-weight:600;text-decoration:none;">MGA</a>'
-        );
+        return 'Gestionar: ' . e($name);
     }
 
     public function getManageUrl(): string

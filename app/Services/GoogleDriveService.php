@@ -229,10 +229,12 @@ class GoogleDriveService
     public function uploadEvidence(Project $project, Requirement $requirement, UploadedFile $file, string $targetName, ?int $userId = null): RequirementEvidence
     {
         $drive = $this->drive($userId);
-        $parentFolderId = $project->drive_folder_id;
 
         $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, true);
-        $folderId = $resolved['id'] ?? $parentFolderId;
+        $folderId = $resolved['id'] ?? null;
+        if (!$folderId) {
+            throw new \RuntimeException('No se pudo resolver la carpeta destino en Drive: ' . ($resolved['label'] ?? $requirement->carpeta));
+        }
 
         $driveFile = new DriveFile([
             'name' => $targetName,
@@ -618,8 +620,11 @@ class GoogleDriveService
                 $refreshToken = $client->getRefreshToken() ?: ($token['refresh_token'] ?? null);
                 if ($refreshToken) {
                     try {
-                        $client->fetchAccessTokenWithRefreshToken($refreshToken);
-                        $this->storeToken($client->getAccessToken(), $userId);
+                        $refreshedToken = $client->fetchAccessTokenWithRefreshToken($refreshToken);
+                        if (!isset($refreshedToken['refresh_token']) && $refreshToken) {
+                            $refreshedToken['refresh_token'] = $refreshToken;
+                        }
+                        $this->storeToken($refreshedToken, $userId);
                     } catch (\Throwable $e) {
                         $this->forgetToken($userId);
                         throw new \RuntimeException('Token de Google expirado o revocado. Reconecta Drive.', 0, $e);
@@ -706,8 +711,11 @@ class GoogleDriveService
         $pageToken = null;
 
         do {
-            $response = $drive->files->listFiles([
-                'q' => sprintf("'%s' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'", $folderId),
+            $response = $this->listDriveFiles($drive, [
+                'q' => sprintf(
+                    "'%s' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'",
+                    $this->escapeDriveQueryValue($folderId)
+                ),
                 'fields' => 'nextPageToken, files(id,name,mimeType,modifiedTime)',
                 'pageToken' => $pageToken,
                 'pageSize' => 1000,
@@ -747,8 +755,11 @@ class GoogleDriveService
 
             $pageToken = null;
             do {
-                $response = $drive->files->listFiles([
-                    'q' => sprintf("'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'", $current),
+                $response = $this->listDriveFiles($drive, [
+                    'q' => sprintf(
+                        "'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
+                        $this->escapeDriveQueryValue($current)
+                    ),
                     'fields' => 'nextPageToken, files(id,name)',
                     'pageToken' => $pageToken,
                     'pageSize' => 200,
@@ -775,13 +786,29 @@ class GoogleDriveService
         $queue = collect([$rootFolderId]);
         $targetNormalized = $this->normalizeFolderName($targetName);
 
+        $direct = $this->findDirectChildFolderIdByName($rootFolderId, $targetName, $userId);
+        if ($direct) {
+            return $direct;
+        }
+
+        $structuringFolderId = $this->findDirectChildFolderIdByName($rootFolderId, '01 Estructuracion', $userId);
+        if ($structuringFolderId) {
+            $insideStructuring = $this->findDirectChildFolderIdByName($structuringFolderId, $targetName, $userId);
+            if ($insideStructuring) {
+                return $insideStructuring;
+            }
+        }
+
         while ($queue->isNotEmpty()) {
             $current = $queue->shift();
             $pageToken = null;
 
             do {
-                $response = $drive->files->listFiles([
-                    'q' => sprintf("'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'", $current),
+                $response = $this->listDriveFiles($drive, [
+                    'q' => sprintf(
+                        "'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
+                        $this->escapeDriveQueryValue((string) $current)
+                    ),
                     'fields' => 'nextPageToken, files(id,name)',
                     'pageToken' => $pageToken,
                     'pageSize' => 200,
@@ -855,7 +882,7 @@ class GoogleDriveService
         $baseFolderName = trim((string) ($requirement->carpeta ?: 'Sin carpeta'));
 
         if (!$this->isEstudioRequirement($requirement)) {
-            $baseFolderId = $this->cachedFolderId($project, $baseFolderName, $userId);
+            $baseFolderId = $this->resolvedStandardRequirementFolder($project, $baseFolderName, $userId, $createStudyFolder);
             if (!$baseFolderId) {
                 return ['id' => null, 'label' => $baseFolderName];
             }
@@ -879,6 +906,65 @@ class GoogleDriveService
         }
 
         return ['id' => $studyFolderId, 'label' => $estudiosFolderName . ' / ' . $studyName];
+    }
+
+    private function resolvedStandardRequirementFolder(Project $project, string $folderName, ?int $userId = null, bool $createIfMissing = false): ?string
+    {
+        $groupCode = $this->detectRequirementGroupCode($folderName);
+        if ($groupCode === null) {
+            return $this->cachedFolderId($project, $folderName, $userId);
+        }
+
+        $structuringFolderId = $this->findDirectChildFolderIdByName($project->drive_folder_id, '01 Estructuracion', $userId);
+        if (!$structuringFolderId && $createIfMissing) {
+            $structuringFolderId = $this->createChildFolder($project->drive_folder_id, '01 Estructuracion', $userId);
+        }
+        if (!$structuringFolderId) {
+            return $this->cachedFolderId($project, $folderName, $userId);
+        }
+
+        $parentFolderName = $this->structuringFolderNameForGroup($groupCode);
+        if ($parentFolderName === null) {
+            return $this->cachedFolderId($project, $folderName, $userId);
+        }
+
+        $parentFolderId = $this->cachedChildFolderId($project, $structuringFolderId, $parentFolderName, $userId, $createIfMissing);
+        if (!$parentFolderId) {
+            return null;
+        }
+
+        if ($this->normalizeFolderName($folderName) === $this->normalizeFolderName($parentFolderName)) {
+            return $parentFolderId;
+        }
+
+        return $this->cachedChildFolderId($project, $parentFolderId, $folderName, $userId, $createIfMissing);
+    }
+
+    private function detectRequirementGroupCode(string $folderName): ?string
+    {
+        if (preg_match('/^\s*0?([1-5])(?:[\s.]|$)/', $folderName, $matches)) {
+            return str_pad((string) $matches[1], 2, '0', STR_PAD_LEFT);
+        }
+
+        return null;
+    }
+
+    private function structuringFolderNameForGroup(string $groupCode): ?string
+    {
+        foreach ((array) config('services.google.project_structuring_folders', []) as $folder) {
+            $folder = trim((string) $folder);
+            if ($this->detectRequirementGroupCode($folder) === $groupCode) {
+                return $folder;
+            }
+        }
+
+        return [
+            '01' => '01 Formulacion',
+            '02' => '02 Presupuesto',
+            '03' => '03 Certificaciones',
+            '04' => '04 Licencias y Permisos',
+            '05' => '05 Estudios y Diseños',
+        ][$groupCode] ?? null;
     }
 
     private function cachedChildFolderId(Project $project, string $parentFolderId, string $childFolderName, ?int $userId = null, bool $createIfMissing = false): ?string
@@ -920,11 +1006,36 @@ class GoogleDriveService
         $drive = $this->drive($userId);
         $targetNormalized = $this->normalizeFolderName($targetName);
         $targetClean = $this->normalizeStudyFolderKey($targetName);
+
+        $exact = trim($targetName);
+        if ($exact !== '') {
+            try {
+                $response = $this->listDriveFiles($drive, [
+                    'q' => sprintf(
+                        "'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder' and name = '%s'",
+                        $this->escapeDriveQueryValue($parentFolderId),
+                        $this->escapeDriveQueryValue($exact)
+                    ),
+                    'fields' => 'files(id,name)',
+                    'pageSize' => 10,
+                ]);
+
+                foreach ($response->files as $folder) {
+                    return $folder->id;
+                }
+            } catch (\Throwable $e) {
+                // Fall back to normalized scan below; Drive can be temporarily slow.
+            }
+        }
+
         $pageToken = null;
 
         do {
-            $response = $drive->files->listFiles([
-                'q' => sprintf("'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'", $parentFolderId),
+            $response = $this->listDriveFiles($drive, [
+                'q' => sprintf(
+                    "'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
+                    $this->escapeDriveQueryValue($parentFolderId)
+                ),
                 'fields' => 'nextPageToken, files(id,name)',
                 'pageToken' => $pageToken,
                 'pageSize' => 200,
@@ -944,6 +1055,33 @@ class GoogleDriveService
         } while ($pageToken);
 
         return null;
+    }
+
+    private function escapeDriveQueryValue(string $value): string
+    {
+        return str_replace(["\\", "'"], ["\\\\", "\\'"], $value);
+    }
+
+    private function listDriveFiles(Drive $drive, array $params)
+    {
+        $attempt = 0;
+        $lastException = null;
+
+        while ($attempt < 3) {
+            $attempt++;
+
+            try {
+                return $drive->files->listFiles($params);
+            } catch (\Throwable $e) {
+                $lastException = $e;
+                if ($attempt >= 3 || !$this->isRetryableDriveError($e)) {
+                    break;
+                }
+                sleep($attempt * 2);
+            }
+        }
+
+        throw $lastException ?: new \RuntimeException('No se pudo consultar Google Drive.');
     }
 
     private function createChildFolder(string $parentFolderId, string $name, ?int $userId = null): ?string
@@ -1044,8 +1182,11 @@ class GoogleDriveService
             $pageToken = null;
 
             do {
-                $response = $drive->files->listFiles([
-                    'q' => sprintf("'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'", $current),
+                $response = $this->listDriveFiles($drive, [
+                    'q' => sprintf(
+                        "'%s' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
+                        $this->escapeDriveQueryValue((string) $current)
+                    ),
                     'fields' => 'nextPageToken, files(id,name)',
                     'pageToken' => $pageToken,
                     'pageSize' => 200,

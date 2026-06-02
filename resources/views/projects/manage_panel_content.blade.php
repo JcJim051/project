@@ -592,14 +592,19 @@
                     if (!req || !req.has_evidence) return "Pendiente";
                     if (req.fulfillment_source === "manual") return "Suplido manual";
                     if (req.fulfillment_source === "auto") return "Suplido auto";
-                    if (req.fulfillment_source === "upload") return "Suplido por carga";
+                    if (req.fulfillment_source === "upload") return "Cargado";
                     return "Suplido";
                 },
                 fulfillmentClass(req) {
                     if (!req || !req.has_evidence) return "bg-gray-100 text-gray-600";
                     if (req.fulfillment_source === "manual") return "bg-violet-100 text-violet-700";
                     if (req.fulfillment_source === "auto") return "bg-emerald-100 text-emerald-700";
+                    if (req.fulfillment_source === "upload") return "";
                     return "bg-sky-100 text-sky-700";
+                },
+                fulfillmentStyle(req) {
+                    if (!req || req.fulfillment_source !== "upload") return "";
+                    return "background:#dcfce7;color:#166534;border:1px solid #bbf7d0;font-weight:700;";
                 },
                 firstEvidenceLink(req) {
                     if (!req || !Array.isArray(req.evidences)) return null;
@@ -1028,13 +1033,22 @@
                         <p class="text-sm text-gray-500">Panel maestro-detalle para gestionar evidencias por grupo.</p>
                     </div>
                     <div class="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+                        @if (!empty($mgaUrl))
+                            <a
+                                href="{{ $mgaUrl }}"
+                                target="_blank"
+                                rel="noopener"
+                                style="display:inline-flex;align-items:center;padding:2px 8px;border:1px solid #86efac;border-radius:6px;background:#ecfdf5;color:#15803d;font-size:12px;font-weight:600;text-decoration:none;">
+                                MGA
+                            </a>
+                        @endif
                         <a
                             href="{{ route('filament.admin.resources.projects.bank', ['record' => $project]) }}"
                             class="h-8 px-3 inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition-colors">
                             Generar documentos del banco
                         </a>
                         <a
-                            href="{{ route('projects.documents', $project) }}"
+                            href="{{ route('filament.admin.resources.projects.documents', ['record' => $project]) }}"
                             class="h-8 px-3 inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors">
                             Crear certificaciones
                         </a>
@@ -1146,7 +1160,7 @@
                                                         </template>
                                                     </div>
                                                     <div class="mt-1">
-                                                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium" :class="fulfillmentClass(req)" x-text="fulfillmentLabel(req)"></span>
+                                                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium" :class="fulfillmentClass(req)" :style="fulfillmentStyle(req)" x-text="fulfillmentLabel(req)"></span>
                                                     </div>
                                                 </div>
                                             </template>
@@ -1197,7 +1211,7 @@
                                                         class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium"
                                                         :class="currentRequirement().has_evidence ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'"
                                                         x-text="currentRequirement().has_evidence ? `${currentRequirement().valid_evidence_count} evidencia(s)` : 'Sin evidencia'"></span>
-                                                    <span class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium ml-2" :class="fulfillmentClass(currentRequirement())" x-text="fulfillmentLabel(currentRequirement())"></span>
+                                                    <span class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium ml-2" :class="fulfillmentClass(currentRequirement())" :style="fulfillmentStyle(currentRequirement())" x-text="fulfillmentLabel(currentRequirement())"></span>
                                                 </div>
 
                                                 <div class="flex items-center gap-2">

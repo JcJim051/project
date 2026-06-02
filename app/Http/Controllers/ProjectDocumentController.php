@@ -214,7 +214,7 @@ class ProjectDocumentController extends Controller
         return (string) $number;
     }
 
-    private function allowedTemplates(Project $project)
+    public function allowedTemplates(Project $project)
     {
         $requirements = $project->requisitos()->get(['requirements.id', 'requirements.nombre_documento', 'requirements.requisito']);
         if ($requirements->isEmpty()) {
