@@ -6,6 +6,7 @@ use App\Filament\Resources\ProjectResource;
 use App\Models\AttachmentPackageRun;
 use App\Models\Project;
 use App\Models\RequirementEvidence;
+use App\Services\RequirementProgressService;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
@@ -74,22 +75,15 @@ class ManageProjectAttachments extends Page
     private function overallPercent(Project $project): int
     {
         $project->loadMissing('sectores');
-        $requirements = $project->requisitos()->where('requirements.visible', true)->get(['requirements.id', 'requirements.carpeta', 'requirements.sector']);
+        $requirements = $project->requisitos()->where('requirements.visible', true)->get();
         $requirements = $this->filterSectorial($requirements, $project);
+        $evidences = RequirementEvidence::query()->where('project_id', $project->id)->get();
 
-        $total = $requirements->count();
-        if ($total === 0) {
-            return 0;
-        }
+        /** @var RequirementProgressService $progressService */
+        $progressService = app(RequirementProgressService::class);
+        $analysis = $progressService->analyze($requirements, $evidences);
 
-        $done = RequirementEvidence::query()
-            ->where('project_id', $project->id)
-            ->whereIn('requirement_id', $requirements->pluck('id'))
-            ->where('in_drive', true)
-            ->distinct('requirement_id')
-            ->count('requirement_id');
-
-        return (int) round(($done / $total) * 100);
+        return $progressService->buildOverallProgress($requirements, $analysis)['percent'];
     }
 
     private function filterSectorial($requirements, Project $project)

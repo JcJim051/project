@@ -1,6 +1,7 @@
     @php
         $panelFolders = [];
         $panelRequirements = [];
+        $progressStatuses = $progressAnalysis['requirements'] ?? [];
 
         foreach ($manageSections as $sectionIndex => $section) {
             $folderName = $section['name'];
@@ -40,11 +41,13 @@
                         'application/msword',
                         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                         'application/vnd.ms-excel',
+                        'application/vnd.ms-excel.sheet.macroenabled.12',
+                        'application/vnd.ms-excel.sheet.binary.macroenabled.12',
                         'application/vnd.openxmlformats-officedocument.presentationml.presentation',
                         'application/vnd.ms-powerpoint',
                         'application/vnd.ms-project',
                         'application/x-msproject',
-                    ], true) || preg_match('/\.(docx?|xlsx?|pptx?|mpp)$/', $name);
+                    ], true) || preg_match('/\.(docx?|xlsx?|xlsm|xlsb|csv|pptx?|mpp)$/', $name);
                     return $isPdf || $isEditable;
                 })
                 ->sortByDesc('id')
@@ -54,25 +57,32 @@
                 ->values();
 
                 $calcNumeracion = $renumerated[$req->id] ?? $req->codigo_interno ?? $req->numeracion;
-                $validEvidenceCount = $reqEvidences
-                    ->where('in_drive', true)
-                    ->where('drive_folder_name', $req->carpeta)
-                    ->count();
-                $hasEvidence = $validEvidenceCount > 0;
-                $validSources = $reqEvidences
-                    ->where('in_drive', true)
-                    ->where('drive_folder_name', $req->carpeta)
-                    ->pluck('source')
-                    ->filter()
-                    ->map(fn ($source) => strtolower((string) $source))
-                    ->values();
-                $fulfillmentSource = 'none';
-                if ($validSources->contains('manual_link')) {
-                    $fulfillmentSource = 'manual';
-                } elseif ($validSources->contains('auto_match') || $validSources->contains('drive')) {
-                    $fulfillmentSource = 'auto';
-                } elseif ($validSources->contains('upload')) {
-                    $fulfillmentSource = 'upload';
+                $status = $progressStatuses[$req->id] ?? [];
+                $isCompositeParent = (bool) ($status['is_composite_parent'] ?? false);
+                $compositeFolder = $status['composite_folder'] ?? null;
+                $compositeDone = (int) ($status['composite_done'] ?? 0);
+                $compositeTotal = (int) ($status['composite_total'] ?? 0);
+                $validEvidenceCount = array_key_exists('valid_evidence_count', $status)
+                    ? (int) $status['valid_evidence_count']
+                    : $reqEvidences->where('in_drive', true)->count();
+                $hasEvidence = array_key_exists('has_evidence', $status)
+                    ? (bool) $status['has_evidence']
+                    : $validEvidenceCount > 0;
+                $fulfillmentSource = (string) ($status['fulfillment_source'] ?? 'none');
+                if (!$isCompositeParent && $fulfillmentSource === 'none') {
+                    $validSources = $reqEvidences
+                        ->where('in_drive', true)
+                        ->pluck('source')
+                        ->filter()
+                        ->map(fn ($source) => strtolower((string) $source))
+                        ->values();
+                    if ($validSources->contains('manual_link')) {
+                        $fulfillmentSource = 'manual';
+                    } elseif ($validSources->contains('auto_match') || $validSources->contains('drive')) {
+                        $fulfillmentSource = 'auto';
+                    } elseif ($validSources->contains('upload')) {
+                        $fulfillmentSource = 'upload';
+                    }
                 }
 
                 $studyName = null;
@@ -92,6 +102,14 @@
                     'has_evidence' => $hasEvidence,
                     'valid_evidence_count' => $validEvidenceCount,
                     'fulfillment_source' => $fulfillmentSource,
+                    'is_composite_parent' => $isCompositeParent,
+                    'composite_folder' => $compositeFolder,
+                    'composite_done' => $compositeDone,
+                    'composite_total' => $compositeTotal,
+                    'count_in_progress' => (bool) ($status['count_in_progress'] ?? true),
+                    'composite_message' => $isCompositeParent
+                        ? 'Este requisito se cumple automáticamente con los documentos activos de la carpeta ' . $compositeFolder . '.'
+                        : null,
                     'upload_url' => route('projects.manage.upload', [$project, $req]),
                     'edit_url' => route('filament.admin.resources.requirements.edit', ['record' => $req]),
                     'drive_files_url' => route('projects.drive.files', $project),
@@ -410,6 +428,11 @@
                 uploadMessageType: '',
                 uploadTimer: null,
                 historyOpen: false,
+                deleteConfirmOpen: false,
+                deleteConfirmEvidence: null,
+                deleteConfirmText: '',
+                deleteConfirmBusy: false,
+                deleteConfirmError: '',
                 init() {
                     this.selectInitial();
                 },
@@ -589,22 +612,42 @@
                     return this.requirementById(this.selectedRequirementId);
                 },
                 fulfillmentLabel(req) {
-                    if (!req || !req.has_evidence) return "Pendiente";
+                    if (!req) return "Pendiente";
+                    if (req.is_composite_parent) {
+                        if (req.has_evidence) return "Sub-grupo completado";
+                        return `${req.composite_done || 0}/${req.composite_total || 0} documentos requeridos cargados`;
+                    }
+                    if (!req.has_evidence) return "Pendiente";
                     if (req.fulfillment_source === "manual") return "Suplido manual";
                     if (req.fulfillment_source === "auto") return "Suplido auto";
                     if (req.fulfillment_source === "upload") return "Cargado";
                     return "Suplido";
                 },
                 fulfillmentClass(req) {
-                    if (!req || !req.has_evidence) return "bg-gray-100 text-gray-600";
+                    if (!req) return "bg-gray-100 text-gray-600";
+                    if (req.is_composite_parent) {
+                        return req.has_evidence ? "" : "bg-amber-100 text-amber-700";
+                    }
+                    if (!req.has_evidence) return "bg-gray-100 text-gray-600";
                     if (req.fulfillment_source === "manual") return "bg-violet-100 text-violet-700";
                     if (req.fulfillment_source === "auto") return "bg-emerald-100 text-emerald-700";
                     if (req.fulfillment_source === "upload") return "";
                     return "bg-sky-100 text-sky-700";
                 },
                 fulfillmentStyle(req) {
-                    if (!req || req.fulfillment_source !== "upload") return "";
+                    if (!req) return "";
+                    if (req.is_composite_parent && req.has_evidence) {
+                        return "background:#dcfce7;color:#166534;border:1px solid #bbf7d0;font-weight:700;";
+                    }
+                    if (req.is_composite_parent || req.fulfillment_source !== "upload") return "";
                     return "background:#dcfce7;color:#166534;border:1px solid #bbf7d0;font-weight:700;";
+                },
+                evidenceCountLabel(req) {
+                    if (!req) return "Sin evidencia";
+                    if (req.is_composite_parent) {
+                        return `${req.composite_done || 0} de ${req.composite_total || 0} documento(s) requerido(s)`;
+                    }
+                    return req.has_evidence ? `${req.valid_evidence_count} evidencia(s)` : "Sin evidencia";
                 },
                 firstEvidenceLink(req) {
                     if (!req || !Array.isArray(req.evidences)) return null;
@@ -658,7 +701,7 @@
                 },
                 async openDrivePicker() {
                     const req = this.currentRequirement();
-                    if (!req) return;
+                    if (!req || req.is_composite_parent) return;
                     this.drivePickerOpen = true;
                     this.drivePickerSelected = [];
                     await this.loadDriveFiles(req);
@@ -745,7 +788,7 @@
                     }
                 },
                 prepareBulkRows() {
-                    const reqs = this.visibleRequirementsInSelectedSubgroup();
+                    const reqs = this.visibleRequirementsInSelectedSubgroup().filter(req => !req.is_composite_parent);
                     this.bulkRows = reqs.map(req => ({
                         requirement_id: req.id,
                         title: req.title,
@@ -815,16 +858,17 @@
                 },
                 async deleteEvidenceFromDrive(evidence) {
                     if (!evidence || !evidence.delete_drive_url) return;
-                    if (!confirm("¿Borrar este archivo de Drive? Esta acción no se puede deshacer.")) return;
                     try {
                         const response = await fetch(evidence.delete_drive_url, {
                             method: "DELETE",
                             headers: {
+                                "Content-Type": "application/json",
                                 "Accept": "application/json",
                                 "X-CSRF-TOKEN": this.csrfToken,
                                 "X-Requested-With": "XMLHttpRequest",
                             },
                             credentials: "same-origin",
+                            body: JSON.stringify({ confirmation: this.deleteConfirmText }),
                         });
                         const data = await response.json();
                         if (!response.ok || !data.ok) {
@@ -832,8 +876,30 @@
                         }
                         window.location.reload();
                     } catch (error) {
-                        alert(error.message || "Error borrando archivo en Drive.");
+                        this.deleteConfirmError = error.message || "Error borrando archivo en Drive.";
+                    } finally {
+                        this.deleteConfirmBusy = false;
                     }
+                },
+                openDeleteConfirm(evidence) {
+                    if (!evidence || !evidence.delete_drive_url) return;
+                    this.deleteConfirmEvidence = evidence;
+                    this.deleteConfirmText = '';
+                    this.deleteConfirmError = '';
+                    this.deleteConfirmBusy = false;
+                    this.deleteConfirmOpen = true;
+                },
+                closeDeleteConfirm() {
+                    if (this.deleteConfirmBusy) return;
+                    this.deleteConfirmOpen = false;
+                    this.deleteConfirmEvidence = null;
+                    this.deleteConfirmText = '';
+                    this.deleteConfirmError = '';
+                },
+                confirmDeleteEvidenceFromDrive() {
+                    if (this.deleteConfirmText !== 'BORRAR' || !this.deleteConfirmEvidence || this.deleteConfirmBusy) return;
+                    this.deleteConfirmBusy = true;
+                    this.deleteEvidenceFromDrive(this.deleteConfirmEvidence);
                 },
                 setUploadMessage(type, text) {
                     this.uploadMessageType = type;
@@ -857,6 +923,10 @@
                 async uploadCurrentRequirement(event) {
                     const req = this.currentRequirement();
                     if (!req || this.uploadBusy) return;
+                    if (req.is_composite_parent) {
+                        this.setUploadMessage('error', req.composite_message || 'Este requisito se cumple automáticamente con sus documentos requeridos.');
+                        return;
+                    }
 
                     const form = event?.target;
                     if (!form) return;
@@ -1156,7 +1226,7 @@
                                                             <a :href="firstEvidenceLink(req)" target="_blank" rel="noopener" class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">Ver</a>
                                                         </template>
                                                         <template x-if="!firstEvidenceLink(req)">
-                                                            <span class="text-[11px] text-gray-500">Pendiente</span>
+                                                            <span class="text-[11px]" :class="req.has_evidence ? 'text-emerald-600 font-semibold' : 'text-gray-500'" x-text="req.is_composite_parent ? (req.has_evidence ? 'OK' : 'Parcial') : 'Pendiente'"></span>
                                                         </template>
                                                     </div>
                                                     <div class="mt-1">
@@ -1182,42 +1252,56 @@
                                         <template x-if="currentRequirement()">
                                             <div class="space-y-3">
                                                 <div class="text-sm font-semibold text-gray-800" x-text="currentDisplayName(currentRequirement())"></div>
-                                                <form method="POST"
-                                                    enctype="multipart/form-data"
-                                                    action="{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}"
-                                                    x-bind:action="currentRequirement() ? currentRequirement().upload_url : '{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}'"
-                                                    @submit.prevent="uploadCurrentRequirement($event)"
-                                                    class="space-y-3 rounded-lg border-2 border-emerald-200 bg-emerald-50/70 p-3">
-                                                    @csrf
-                                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                                                        <div class="sm:col-span-2">
-                                                            <input type="file" name="archivos[]" multiple class="block w-full rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
-                                                        </div>
+                                                <template x-if="currentRequirement().is_composite_parent">
+                                                    <div class="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                                                        <div class="font-semibold">Carga directa deshabilitada</div>
+                                                        <div x-text="currentRequirement().composite_message"></div>
                                                         <div>
-                                                        <button
-                                                            type="submit"
-                                                            class="w-full h-10 rounded-md text-sm font-semibold shadow-sm border border-gray-400 text-gray-900 ring-1 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                                                            :class="uploadButtonClass()"
-                                                            :disabled="uploadBusy"
-                                                            >
-                                                            <span x-text="uploadBusy ? 'Subiendo...' : 'Subir evidencia'"></span>
-                                                        </button>
+                                                            Avance de documentos requeridos:
+                                                            <span class="font-semibold" x-text="`${currentRequirement().composite_done || 0} de ${currentRequirement().composite_total || 0}`"></span>
                                                         </div>
                                                     </div>
-                                                </form>
+                                                </template>
+                                                <template x-if="!currentRequirement().is_composite_parent">
+                                                    <form method="POST"
+                                                        enctype="multipart/form-data"
+                                                        action="{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}"
+                                                        x-bind:action="currentRequirement() ? currentRequirement().upload_url : '{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}'"
+                                                        @submit.prevent="uploadCurrentRequirement($event)"
+                                                        class="space-y-3 rounded-lg border-2 border-emerald-200 bg-emerald-50/70 p-3">
+                                                        @csrf
+                                                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                                                            <div class="sm:col-span-2">
+                                                                <input type="file" name="archivos[]" multiple class="block w-full rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
+                                                            </div>
+                                                            <div>
+                                                            <button
+                                                                type="submit"
+                                                                class="w-full h-10 rounded-md text-sm font-semibold shadow-sm border border-gray-400 text-gray-900 ring-1 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                                                                :class="uploadButtonClass()"
+                                                                :disabled="uploadBusy"
+                                                                >
+                                                                <span x-text="uploadBusy ? 'Subiendo...' : 'Subir evidencia'"></span>
+                                                            </button>
+                                                            </div>
+                                                        </div>
+                                                    </form>
+                                                </template>
 
                                                 <div>
                                                     <span
                                                         class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium"
                                                         :class="currentRequirement().has_evidence ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'"
-                                                        x-text="currentRequirement().has_evidence ? `${currentRequirement().valid_evidence_count} evidencia(s)` : 'Sin evidencia'"></span>
+                                                        x-text="evidenceCountLabel(currentRequirement())"></span>
                                                     <span class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium ml-2" :class="fulfillmentClass(currentRequirement())" :style="fulfillmentStyle(currentRequirement())" x-text="fulfillmentLabel(currentRequirement())"></span>
                                                 </div>
 
                                                 <div class="flex items-center gap-2">
-                                                    <button type="button" @click="openDrivePicker()" class="h-8 px-3 rounded-md border border-violet-200 bg-violet-50 text-violet-700 text-xs font-medium hover:bg-violet-100">
-                                                        Vincular archivo de Drive
-                                                    </button>
+                                                    <template x-if="!currentRequirement().is_composite_parent">
+                                                        <button type="button" @click="openDrivePicker()" class="h-8 px-3 rounded-md border border-violet-200 bg-violet-50 text-violet-700 text-xs font-medium hover:bg-violet-100">
+                                                            Vincular archivo de Drive
+                                                        </button>
+                                                    </template>
                                                     <button type="button" @click="openBulkLinker()" class="h-8 px-3 rounded-md border border-sky-200 bg-sky-50 text-sky-700 text-xs font-medium hover:bg-sky-100">
                                                         Vinculación masiva
                                                     </button>
@@ -1250,7 +1334,7 @@
                                                                     <button
                                                                         type="button"
                                                                         x-show="currentEvidence(currentRequirement()).file_id"
-                                                                        @click="deleteEvidenceFromDrive(currentEvidence(currentRequirement()))"
+                                                                        @click="openDeleteConfirm(currentEvidence(currentRequirement()))"
                                                                         class="text-rose-700 hover:text-rose-800">
                                                                         Borrar
                                                                     </button>
@@ -1359,6 +1443,45 @@
                     <div class="gp-modal-foot px-4 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
                         <button type="button" @click="closeBulkLinker()" class="h-8 px-3 rounded-md border border-gray-300 text-xs text-gray-700 hover:bg-gray-50">Cancelar</button>
                         <button type="button" @click="submitBulkLink()" :disabled="bulkLoading" class="h-8 px-3 rounded-md bg-sky-600 text-white text-xs font-medium disabled:opacity-50">Aplicar vínculo masivo</button>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="deleteConfirmOpen" x-cloak @click.self="closeDeleteConfirm()" x-on:keydown.escape.window="closeDeleteConfirm()" class="gp-modal-overlay">
+                <div class="gp-modal-card">
+                    <div class="gp-modal-head px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                        <div class="text-sm font-semibold text-gray-800">Borrar archivo de Drive</div>
+                        <button type="button" @click="closeDeleteConfirm()" class="text-xs text-gray-500 hover:text-gray-700">Cerrar</button>
+                    </div>
+                    <div class="gp-modal-body p-4 space-y-3">
+                        <div class="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                            Esta acción borrará el archivo en Google Drive y no se puede deshacer.
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-700">Archivo</div>
+                            <div class="mt-1 break-all rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700" x-text="deleteConfirmEvidence ? deleteConfirmEvidence.name : ''"></div>
+                        </div>
+                        <label class="block">
+                            <span class="text-xs font-semibold text-gray-700">Escribe BORRAR para confirmar</span>
+                            <input
+                                type="text"
+                                x-model="deleteConfirmText"
+                                class="mt-1 w-full rounded-md border-gray-300 text-sm"
+                                autocomplete="off"
+                                placeholder="BORRAR">
+                        </label>
+                        <div x-show="deleteConfirmError" x-cloak class="rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700" x-text="deleteConfirmError"></div>
+                    </div>
+                    <div class="gp-modal-foot px-4 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                        <button type="button" @click="closeDeleteConfirm()" :disabled="deleteConfirmBusy" class="h-8 px-3 rounded-md border border-gray-300 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancelar</button>
+                        <button
+                            type="button"
+                            @click="confirmDeleteEvidenceFromDrive()"
+                            :disabled="deleteConfirmText !== 'BORRAR' || deleteConfirmBusy"
+                            class="h-9 px-4 rounded-md text-xs font-bold shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                            style="background:#b91c1c;color:#ffffff;border:1px solid #991b1b;">
+                            <span x-text="deleteConfirmBusy ? 'Borrando...' : 'Borrar definitivamente'"></span>
+                        </button>
                     </div>
                 </div>
             </div>

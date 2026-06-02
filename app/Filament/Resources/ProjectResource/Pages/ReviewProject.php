@@ -4,6 +4,7 @@ namespace App\Filament\Resources\ProjectResource\Pages;
 
 use App\Filament\Resources\ProjectResource;
 use App\Models\RequirementEvidence;
+use App\Services\RequirementProgressService;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
 use Illuminate\Support\Str;
@@ -41,20 +42,24 @@ class ReviewProject extends Page
         $project = $this->record;
         $requirements = $this->getActiveRequirementsForProject($project);
 
-        $evidenceByRequirement = RequirementEvidence::query()
+        $evidenceRows = RequirementEvidence::query()
             ->where('project_id', $project->id)
             ->whereIn('requirement_id', $requirements->pluck('id'))
             ->where('in_drive', true)
-            ->get()
-            ->groupBy('requirement_id');
+            ->get();
+        $evidenceByRequirement = $evidenceRows->groupBy('requirement_id');
+
+        /** @var RequirementProgressService $progressService */
+        $progressService = app(RequirementProgressService::class);
+        $progressAnalysis = $progressService->analyze($requirements, $evidenceRows);
 
         return [
             'project' => $project,
-            'reviewGroups' => $this->buildSections($requirements, $evidenceByRequirement),
+            'reviewGroups' => $this->buildSections($requirements, $evidenceByRequirement, $progressAnalysis),
         ];
     }
 
-    private function buildSections($requirements, $evidenceByRequirement): array
+    private function buildSections($requirements, $evidenceByRequirement, array $progressAnalysis): array
     {
         $folders = collect($requirements)->groupBy(fn ($req) => (string) ($req->carpeta ?: 'Sin carpeta'));
         $top = [];
@@ -74,12 +79,14 @@ class ReviewProject extends Page
                 ];
             }
 
-            $done = $items->filter(fn ($req) => ($evidenceByRequirement[$req->id] ?? collect())->isNotEmpty())->count();
+            $statuses = $progressAnalysis['requirements'] ?? [];
+            $done = $items->filter(fn ($req) => (bool) ($statuses[$req->id]['has_evidence'] ?? false))->count();
 
             $top[$code]['folders'][] = [
                 'name' => $this->stripFolderPrefix((string) $folderName),
                 'progress' => $done . ' / ' . $items->count(),
-                'items' => $items->map(function ($req) use ($evidenceByRequirement) {
+                'items' => $items->map(function ($req) use ($evidenceByRequirement, $statuses) {
+                    $status = $statuses[$req->id] ?? [];
                     $evidences = ($evidenceByRequirement[$req->id] ?? collect())->map(function ($ev) {
                         return [
                             'id' => (int) $ev->id,
@@ -94,6 +101,10 @@ class ReviewProject extends Page
                         'title' => trim((string) ($req->nombre_documento ?: $req->requisito)),
                         'folder' => (string) ($req->carpeta ?: 'Sin carpeta'),
                         'evidences' => $evidences,
+                        'is_composite_parent' => (bool) ($status['is_composite_parent'] ?? false),
+                        'composite_folder' => $status['composite_folder'] ?? null,
+                        'composite_done' => (int) ($status['composite_done'] ?? 0),
+                        'composite_total' => (int) ($status['composite_total'] ?? 0),
                     ];
                 })->values()->all(),
             ];

@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\Requirement;
 use App\Models\RequirementEvidence;
 use App\Services\GoogleDriveService;
+use App\Services\RequirementProgressService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -82,6 +83,11 @@ class ProjectDriveEvidenceController extends Controller
         $this->authorizeProjectMutation();
         $this->ensureDriveReady($project, $drive);
         $this->ensureRequirementInProject($project, $requirement);
+        if (app(RequirementProgressService::class)->isCompositeParent($requirement)) {
+            return response()->json([
+                'message' => 'Este requisito se cumple automáticamente con sus documentos requeridos; no permite vinculación directa.',
+            ], 422);
+        }
 
         $data = $request->validate([
             'file_ids' => ['required', 'array', 'min:1'],
@@ -144,6 +150,14 @@ class ProjectDriveEvidenceController extends Controller
             abort(404);
         }
 
+        $confirmation = (string) request()->input('confirmation', '');
+        if ($confirmation !== 'BORRAR') {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Debes confirmar escribiendo BORRAR para borrar el archivo.',
+            ], 422);
+        }
+
         if (!$evidence->drive_file_id) {
             return response()->json([
                 'ok' => false,
@@ -193,6 +207,14 @@ class ProjectDriveEvidenceController extends Controller
                         'requirement_id' => (int) ($row['requirement_id'] ?? 0),
                         'file_id' => (string) ($row['file_id'] ?? ''),
                         'reason' => 'Requisito no pertenece al proyecto.',
+                    ];
+                    continue;
+                }
+                if (app(RequirementProgressService::class)->isCompositeParent($requirement)) {
+                    $report['omitted'][] = [
+                        'requirement_id' => $requirement->id,
+                        'file_id' => (string) ($row['file_id'] ?? ''),
+                        'reason' => 'Requisito automático por documentos requeridos: no permite vinculación directa.',
                     ];
                     continue;
                 }

@@ -51,11 +51,13 @@
                         'application/msword',
                         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                         'application/vnd.ms-excel',
+                        'application/vnd.ms-excel.sheet.macroenabled.12',
+                        'application/vnd.ms-excel.sheet.binary.macroenabled.12',
                         'application/vnd.openxmlformats-officedocument.presentationml.presentation',
                         'application/vnd.ms-powerpoint',
                         'application/vnd.ms-project',
                         'application/x-msproject',
-                    ], true) || preg_match('/\.(docx?|xlsx?|pptx?|mpp)$/', $name);
+                    ], true) || preg_match('/\.(docx?|xlsx?|xlsm|xlsb|csv|pptx?|mpp)$/', $name);
                     return $isPdf || $isEditable;
                 })->values();
 

@@ -55,10 +55,17 @@
 
                         <div class="rounded-lg border border-gray-200 p-3">
                             <div class="text-xs font-semibold text-gray-700 mb-2">Visualización de evidencia</div>
-                            <template x-if="selectedRequirement.evidences.length === 0">
+                            <template x-if="selectedRequirement.is_composite_parent">
+                                <div class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-2">
+                                    Este requisito se cumple por los documentos requeridos de
+                                    <span class="font-semibold" x-text="selectedRequirement.composite_folder"></span>:
+                                    <span class="font-semibold" x-text="`${selectedRequirement.composite_done || 0} de ${selectedRequirement.composite_total || 0}`"></span>.
+                                </div>
+                            </template>
+                            <template x-if="!selectedRequirement.is_composite_parent && selectedRequirement.evidences.length === 0">
                                 <div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-2">Sin evidencias para visualizar.</div>
                             </template>
-                            <template x-if="selectedRequirement.evidences.length > 0">
+                            <template x-if="!selectedRequirement.is_composite_parent && selectedRequirement.evidences.length > 0">
                                 <div class="space-y-2">
                                     <select class="w-full rounded-md border border-gray-300 px-2 py-1 text-xs" x-model="selectedEvidenceId" @change="updatePreview()">
                                         <template x-for="ev in selectedRequirement.evidences" :key="ev.id">

@@ -10,6 +10,7 @@ use App\Models\RequirementEvidence;
 use App\Models\Secretaria;
 use App\Models\Sector;
 use App\Models\User;
+use App\Services\RequirementProgressService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -28,15 +29,14 @@ class ProjectController extends Controller
             ->whereIn('project_id', $projectIds)
             ->where('in_drive', true)
             ->get()
-            ->groupBy('project_id')
-            ->map(function ($items) {
-                return $items->pluck('requirement_id')->unique()->values();
-            });
+            ->groupBy('project_id');
 
+        /** @var RequirementProgressService $progressService */
+        $progressService = app(RequirementProgressService::class);
         foreach ($projects as $project) {
-            $total = (int) ($project->requisitos_count ?? 0);
-            $done = $evidencesByProject->get($project->id, collect())->count();
-            $project->avance = $total > 0 ? (int) round(($done / $total) * 100) : 0;
+            $requirements = $project->requisitos()->where('requirements.visible', true)->get();
+            $analysis = $progressService->analyze($requirements, $evidencesByProject->get($project->id, collect()));
+            $project->avance = $progressService->buildOverallProgress($requirements, $analysis)['percent'];
         }
 
         $summaries = [];

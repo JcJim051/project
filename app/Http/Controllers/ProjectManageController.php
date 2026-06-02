@@ -9,6 +9,7 @@ use App\Models\RequirementEvidence;
 use App\Models\AttachmentPackageRun;
 use App\Services\GoogleDriveService;
 use App\Services\MgaTransferAuthorizationService;
+use App\Services\RequirementProgressService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -60,37 +61,26 @@ class ProjectManageController extends Controller
             }
         }
 
-        $evidences = RequirementEvidence::where('project_id', $project->id)
-            ->get()
-            ->groupBy('requirement_id');
+        $evidenceRows = RequirementEvidence::where('project_id', $project->id)->get();
+        $evidences = $evidenceRows->groupBy('requirement_id');
+
+        /** @var RequirementProgressService $progressService */
+        $progressService = app(RequirementProgressService::class);
+        $progressAnalysis = $progressService->analyze($requirements, $evidenceRows);
+        $overallProgress = $progressService->buildOverallProgress($requirements, $progressAnalysis);
+        $overallPercent = $overallProgress['percent'];
 
         $requirementsByFolder = $requirements->groupBy(function ($req) {
             return $req->carpeta ?? 'Sin carpeta';
         });
         $manageSections = $this->buildManageSections($requirementsByFolder);
 
-        $totalRequirements = $requirements->count();
-        $completedRequirements = $requirements->filter(function ($req) use ($evidences) {
-            $reqEvidences = $evidences[$req->id] ?? collect();
-            return $reqEvidences->where('in_drive', true)->isNotEmpty();
-        })->count();
-        $overallPercent = $totalRequirements > 0 ? (int) round(($completedRequirements / $totalRequirements) * 100) : 0;
-
-        $folderProgress = [];
-        foreach ($requirementsByFolder as $folder => $items) {
-            $folderTotal = $items->count();
-            $folderDone = $items->filter(function ($req) use ($evidences) {
-                $reqEvidences = $evidences[$req->id] ?? collect();
-                return $reqEvidences->where('in_drive', true)->isNotEmpty();
-            })->count();
-            $folderPercent = $folderTotal > 0 ? (int) round(($folderDone / $folderTotal) * 100) : 0;
-            $folderProgress[$folder] = [
-                'total' => $folderTotal,
-                'done' => $folderDone,
-                'percent' => $folderPercent,
-            ];
-        }
-        $topGroupProgress = $this->buildTopGroupProgress($folderProgress);
+        $folderProgress = $progressService->buildFolderProgress($requirements, $progressAnalysis);
+        $topGroupProgress = $progressService->buildTopGroupProgress(
+            $requirements,
+            $progressAnalysis,
+            fn (string $folder) => $this->detectTopGroupCode($folder)
+        );
         $attachmentRuns = AttachmentPackageRun::query()
             ->where('project_id', $project->id)
             ->latest()
@@ -137,6 +127,7 @@ class ProjectManageController extends Controller
             'folderProgress' => $folderProgress,
             'manageSections' => $manageSections,
             'topGroupProgress' => $topGroupProgress,
+            'progressAnalysis' => $progressAnalysis,
             'attachmentRuns' => $attachmentRuns,
             'attachmentPdfHealth' => $attachmentPdfHealth,
             'attachmentsMinPercent' => $attachmentsMinPercent,
@@ -163,6 +154,18 @@ class ProjectManageController extends Controller
 
         if (!$project->requisitos->contains($requirement->id)) {
             return $this->uploadErrorResponse($expectsJson, 422, 'requirement_not_applicable', 'Este requisito no está marcado para el proyecto.');
+        }
+
+        /** @var RequirementProgressService $progressService */
+        $progressService = app(RequirementProgressService::class);
+        if ($progressService->isCompositeParent($requirement)) {
+            $targetFolder = $progressService->compositeTargetFolder($requirement) ?: 'su carpeta hija';
+            return $this->uploadErrorResponse(
+                $expectsJson,
+                422,
+                'composite_requirement_upload_blocked',
+                "Este requisito se cumple automáticamente con los documentos activos de la carpeta {$targetFolder}."
+            );
         }
 
         $hadValidEvidenceBefore = RequirementEvidence::query()

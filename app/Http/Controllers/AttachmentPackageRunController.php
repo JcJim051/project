@@ -6,6 +6,7 @@ use App\Jobs\GenerateAttachmentPackageJob;
 use App\Models\AttachmentPackageRun;
 use App\Models\Project;
 use App\Models\RequirementEvidence;
+use App\Services\RequirementProgressService;
 use Illuminate\Http\Request;
 
 class AttachmentPackageRunController extends Controller
@@ -116,24 +117,13 @@ class AttachmentPackageRunController extends Controller
     {
         $project->loadMissing('requisitos');
         $requirements = $project->requisitos()->where('requirements.visible', true)->get();
-        $total = $requirements->count();
-        if ($total === 0) {
-            return 0;
-        }
+        $evidences = RequirementEvidence::query()->where('project_id', $project->id)->get();
 
-        $done = 0;
-        foreach ($requirements as $req) {
-            $hasEvidence = RequirementEvidence::query()
-                ->where('project_id', $project->id)
-                ->where('requirement_id', $req->id)
-                ->where('in_drive', true)
-                ->exists();
-            if ($hasEvidence) {
-                $done++;
-            }
-        }
+        /** @var RequirementProgressService $progressService */
+        $progressService = app(RequirementProgressService::class);
+        $analysis = $progressService->analyze($requirements, $evidences);
 
-        return (int) round(($done / $total) * 100);
+        return $progressService->buildOverallProgress($requirements, $analysis)['percent'];
     }
 
     private function minRequiredPercent(Project $project): int

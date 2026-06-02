@@ -52,6 +52,7 @@ class ManageProject extends Page
                 'folderProgress' => $data['folderProgress'] ?? null,
                 'manageSections' => $data['manageSections'] ?? null,
                 'topGroupProgress' => $data['topGroupProgress'] ?? null,
+                'progressAnalysis' => $data['progressAnalysis'] ?? null,
                 'attachmentRuns' => $data['attachmentRuns'] ?? null,
                 'attachmentPdfHealth' => $data['attachmentPdfHealth'] ?? null,
                 'attachmentsMinPercent' => $data['attachmentsMinPercent'] ?? 80,

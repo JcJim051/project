@@ -16,6 +16,8 @@ use App\Models\ProjectStatus;
 use App\Models\Secretaria;
 use App\Models\Sector;
 use App\Models\User;
+use App\Models\RequirementEvidence;
+use App\Services\RequirementProgressService;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Section;
@@ -577,13 +579,14 @@ class ProjectResource extends Resource
                 TextColumn::make('avance')
                     ->label('Avance')
                     ->state(function (Project $record): int {
-                        $total = (int) ($record->requisitos_count ?? 0);
-                        $done = (int) ($record->evidencias_validas_count ?? 0);
-                        if ($total === 0) {
-                            return 0;
-                        }
+                        $requirements = $record->requisitos()->where('requirements.visible', true)->get();
+                        $evidences = RequirementEvidence::query()->where('project_id', $record->id)->get();
 
-                        return (int) round(($done / $total) * 100);
+                        /** @var RequirementProgressService $progressService */
+                        $progressService = app(RequirementProgressService::class);
+                        $analysis = $progressService->analyze($requirements, $evidences);
+
+                        return $progressService->buildOverallProgress($requirements, $analysis)['percent'];
                     })
                     ->formatStateUsing(fn (int $state): string => $state . '%')
                     ->badge()

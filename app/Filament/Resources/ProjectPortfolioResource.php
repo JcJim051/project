@@ -11,6 +11,7 @@ use App\Models\ProjectStage;
 use App\Models\ProjectStatus;
 use App\Models\RequirementEvidence;
 use App\Models\User;
+use App\Services\RequirementProgressService;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Actions\Action;
@@ -161,26 +162,19 @@ class ProjectPortfolioResource extends Resource
     private static function buildProgressByGroup(Project $project): array
     {
         $project->loadMissing('sectores');
-        $requirements = $project->requisitos()
-            ->where('requirements.visible', true)
-            ->get(['requirements.id', 'requirements.carpeta', 'requirements.sector']);
+        $requirements = $project->requisitos()->where('requirements.visible', true)->get();
         $requirements = static::filterSectorial($requirements, $project);
+        $evidences = RequirementEvidence::query()->where('project_id', $project->id)->get();
 
-        $total = $requirements->count();
-        $evidenceIds = RequirementEvidence::query()
-            ->where('project_id', $project->id)
-            ->whereIn('requirement_id', $requirements->pluck('id'))
-            ->where('in_drive', true)
-            ->distinct()
-            ->pluck('requirement_id')
-            ->all();
-
-        $doneSet = array_fill_keys($evidenceIds, true);
-
-        $groups = $requirements->groupBy(function ($req) {
-            $folder = (string) ($req->carpeta ?: 'Sin carpeta');
-            return static::detectTopGroupCode($folder) ?? '99';
-        });
+        /** @var RequirementProgressService $progressService */
+        $progressService = app(RequirementProgressService::class);
+        $analysis = $progressService->analyze($requirements, $evidences);
+        $overall = $progressService->buildOverallProgress($requirements, $analysis);
+        $topGroups = $progressService->buildTopGroupProgress(
+            $requirements,
+            $analysis,
+            fn (string $folder) => static::detectTopGroupCode($folder)
+        );
 
         $labels = [
             '01' => '01 Formulación',
@@ -193,28 +187,24 @@ class ProjectPortfolioResource extends Resource
 
         $items = [];
         foreach ($labels as $code => $label) {
-            $groupReqs = $groups->get($code, collect());
-            if ($groupReqs->isEmpty()) {
+            $progress = $topGroups[$code] ?? null;
+            if (!$progress || (int) ($progress['total'] ?? 0) === 0) {
                 continue;
             }
 
-            $done = $groupReqs->filter(fn ($r) => isset($doneSet[$r->id]))->count();
-            $groupTotal = $groupReqs->count();
             $items[] = [
                 'code' => $code,
                 'label' => $label,
-                'done' => $done,
-                'total' => $groupTotal,
-                'percent' => $groupTotal > 0 ? (int) round(($done / $groupTotal) * 100) : 0,
+                'done' => (int) $progress['done'],
+                'total' => (int) $progress['total'],
+                'percent' => (int) $progress['percent'],
             ];
         }
 
-        $doneTotal = count($doneSet);
-
         return [
-            'overall_done' => $doneTotal,
-            'overall_total' => $total,
-            'overall_percent' => $total > 0 ? (int) round(($doneTotal / $total) * 100) : 0,
+            'overall_done' => $overall['done'],
+            'overall_total' => $overall['total'],
+            'overall_percent' => $overall['percent'],
             'groups' => $items,
         ];
     }

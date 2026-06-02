@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\MgaTransferAuthorizationService;
 use App\Services\OfficialEmailNotificationService;
 use App\Services\ProjectStatusService;
+use App\Services\RequirementProgressService;
 use Filament\Notifications\Actions\Action as NotificationAction;
 use Filament\Notifications\Events\DatabaseNotificationsSent;
 use Filament\Notifications\Notification as FilamentNotification;
@@ -128,19 +129,13 @@ class ProjectTransferRequestController extends Controller
     {
         $project->loadMissing('requisitos');
         $requirements = $project->requisitos()->where('requirements.visible', true)->get();
-        $total = $requirements->count();
-        if ($total === 0) {
-            return 0;
-        }
+        $evidences = RequirementEvidence::query()->where('project_id', $project->id)->get();
 
-        $done = RequirementEvidence::query()
-            ->where('project_id', $project->id)
-            ->whereIn('requirement_id', $requirements->pluck('id'))
-            ->where('in_drive', true)
-            ->distinct('requirement_id')
-            ->count('requirement_id');
+        /** @var RequirementProgressService $progressService */
+        $progressService = app(RequirementProgressService::class);
+        $analysis = $progressService->analyze($requirements, $evidences);
 
-        return (int) round(($done / $total) * 100);
+        return $progressService->buildOverallProgress($requirements, $analysis)['percent'];
     }
 
     private function notifyEvaluators(Project $project, ProjectTransferRequest $transferRequest, User $sender, ?string $note): void
