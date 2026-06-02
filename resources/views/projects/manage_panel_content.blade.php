@@ -151,6 +151,26 @@
                 'total' => $progress['total'],
                 'percent' => $progress['percent'],
                 'requirement_ids' => $folderReqIds,
+                'is_other_certifications' => \Illuminate\Support\Str::contains(
+                    \Illuminate\Support\Str::lower(\Illuminate\Support\Str::ascii((string) $folderName)),
+                    'otras certificaciones'
+                ),
+            ];
+        }
+
+        $hasOtherCertificationsFolder = collect($panelFolders)->contains(function ($folder) {
+            return (bool) ($folder['is_other_certifications'] ?? false);
+        });
+        if (!$hasOtherCertificationsFolder) {
+            $panelFolders[] = [
+                'key' => 'f_other_certifications_empty',
+                'name' => '3.3 Otras Certificaciones',
+                'group_code' => '03',
+                'done' => 0,
+                'total' => 0,
+                'percent' => 0,
+                'requirement_ids' => [],
+                'is_other_certifications' => true,
             ];
         }
 
@@ -194,6 +214,7 @@
                     'done' => $subDone,
                     'total' => $subTotal,
                     'percent' => $subPercent,
+                    'is_other_certifications' => (bool) ($folder['is_other_certifications'] ?? false),
                 ];
 
                 $groupReqIds = array_merge($groupReqIds, $subReqIds);
@@ -487,9 +508,11 @@
                 },
                 isOtherCertificationsSubgroup() {
                     const subgroup = this.currentSubgroup();
-                    if (!subgroup || this.selectedGroupCode !== '03') return false;
+                    if (!subgroup) return false;
+                    if (subgroup.is_other_certifications) return true;
                     const name = this.normalizeText(subgroup.name || '');
-                    return name.includes('3 3 otras certificaciones') || name.includes('otras certificaciones');
+                    return (this.selectedGroupCode === '03' || name.includes('certificaciones'))
+                        && (name.includes('3 3 otras certificaciones') || name.includes('otras certificaciones'));
                 },
                 selectInitial() {
                     const firstGroup = this.groups.find(g => (g.subgroups || []).length > 0);
@@ -567,6 +590,7 @@
                 },
                 subgroupHasVisibleRequirements(subgroup) {
                     if (!subgroup) return false;
+                    if (subgroup.is_other_certifications) return true;
                     const list = (subgroup.requirement_ids || [])
                         .map(id => this.requirementById(id))
                         .filter(Boolean);
@@ -1269,20 +1293,23 @@
                         <section class="manage-right">
                             <div class="pane pane-split p-3">
                                 <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                                    <div class="text-sm font-semibold text-gray-800">Requisitos del subgrupo activo</div>
+                                    <div class="flex items-center justify-between gap-2">
+                                        <div class="text-sm font-semibold text-gray-800">Requisitos del subgrupo activo</div>
+                                        <button
+                                            type="button"
+                                            x-show="isOtherCertificationsSubgroup()"
+                                            x-cloak
+                                            @click="openCustomCertificationModal()"
+                                            class="h-8 rounded-md border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-700 hover:bg-amber-100">
+                                            Agregar certificación
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="pane-body">
                                     <div class="pane-inner" :class="toneClass()">
                                     <template x-if="currentSubgroup()">
                                         <div class="mb-2 flex items-center justify-between gap-2">
                                             <div class="text-xs text-gray-600" x-text="currentSubgroup().name"></div>
-                                            <button
-                                                type="button"
-                                                x-show="isOtherCertificationsSubgroup()"
-                                                @click="openCustomCertificationModal()"
-                                                class="h-8 rounded-md border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-700 hover:bg-amber-100">
-                                                Agregar certificación
-                                            </button>
                                         </div>
                                     </template>
                                     <template x-if="visibleRequirementsInSelectedSubgroup().length === 0">
