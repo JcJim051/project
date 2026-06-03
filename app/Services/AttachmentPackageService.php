@@ -366,8 +366,9 @@ class AttachmentPackageService
 
     private function runPythonGenerator(string $manifestPath): array
     {
-        $python = config('services.attachments_pdf.python_bin', 'python3');
-        $script = config('services.attachments_pdf.script_path', base_path('scripts/generate_attachment_pdfs.py'));
+        $runtime = app(AttachmentPdfRuntime::class);
+        $python = $runtime->pythonBin();
+        $script = $runtime->scriptPath();
         if (!file_exists($script)) {
             throw new \RuntimeException('No existe el script Python de adjuntos: ' . $script);
         }

@@ -8,6 +8,7 @@ use App\Models\Requirement;
 use App\Models\RequirementEvidence;
 use App\Models\AttachmentPackageRun;
 use App\Services\GoogleDriveService;
+use App\Services\AttachmentPdfRuntime;
 use App\Services\MgaTransferAuthorizationService;
 use App\Services\RequirementProgressService;
 use Illuminate\Http\Request;
@@ -787,36 +788,7 @@ class ProjectManageController extends Controller
 
     private function buildAttachmentPdfHealth(): array
     {
-        $pythonBin = (string) config('services.attachments_pdf.python_bin', 'python3');
-        $scriptPath = (string) config('services.attachments_pdf.script_path', base_path('scripts/generate_attachment_pdfs.py'));
-
-        $pythonOk = false;
-        $pythonVersion = null;
-        $pythonError = null;
-
-        try {
-            $process = new Process([$pythonBin, '--version']);
-            $process->setTimeout(10);
-            $process->run();
-
-            if ($process->isSuccessful()) {
-                $pythonOk = true;
-                $pythonVersion = trim($process->getOutput() ?: $process->getErrorOutput());
-            } else {
-                $pythonError = trim($process->getErrorOutput() ?: $process->getOutput());
-            }
-        } catch (\Throwable $e) {
-            $pythonError = $e->getMessage();
-        }
-
-        return [
-            'python_bin' => $pythonBin,
-            'script_path' => $scriptPath,
-            'script_exists' => is_file($scriptPath),
-            'python_ok' => $pythonOk,
-            'python_version' => $pythonVersion,
-            'python_error' => $pythonError,
-        ];
+        return app(AttachmentPdfRuntime::class)->health();
     }
 
     private function authorizeProjectMutation(): void
