@@ -6,6 +6,7 @@ use App\Filament\Resources\ProjectResource;
 use App\Models\AttachmentPackageRun;
 use App\Models\Project;
 use App\Models\RequirementEvidence;
+use App\Services\AttachmentPackageService;
 use App\Services\AttachmentPdfRuntime;
 use App\Services\RequirementProgressService;
 use Filament\Actions\Action;
@@ -39,6 +40,15 @@ class ManageProjectAttachments extends Page
             ->latest('id')
             ->limit(20)
             ->get();
+        $activeRun = $attachmentRuns->first(fn (AttachmentPackageRun $run) => in_array($run->status, ['pending', 'running'], true));
+        $availableDocuments = app(AttachmentPackageService::class)->availablePackageDocuments($project);
+        $availableKeys = collect($availableDocuments)->pluck('key')->all();
+        $rememberedSelection = collect($project->attachment_package_selection ?: [])
+            ->map(fn ($key) => (string) $key)
+            ->filter(fn ($key) => in_array($key, $availableKeys, true))
+            ->values()
+            ->all();
+        $selectedDocuments = !empty($rememberedSelection) ? $rememberedSelection : $availableKeys;
 
         $this->viewData = [
             'project' => $project,
@@ -47,7 +57,11 @@ class ManageProjectAttachments extends Page
             'canGenerateAttachmentPackage' => $overallPercent >= $attachmentsMinPercent,
             'attachmentRuns' => $attachmentRuns,
             'attachmentPdfHealth' => $this->buildAttachmentPdfHealth(),
-            'hasActiveRuns' => $attachmentRuns->contains(fn (AttachmentPackageRun $run) => in_array($run->status, ['pending', 'running'], true)),
+            'availableAttachmentDocuments' => $availableDocuments,
+            'selectedAttachmentDocuments' => $selectedDocuments,
+            'hasActiveRuns' => (bool) $activeRun,
+            'activeAttachmentRun' => $activeRun,
+            'activeAttachmentRunUrl' => $activeRun ? route('projects.attachments.runs.show', [$project, $activeRun]) : null,
         ];
     }
 

@@ -14,9 +14,13 @@ class AttachmentPackageRun extends Model
         'user_id',
         'status',
         'progress_percent_snapshot',
+        'selected_documents',
+        'output_type',
         'version_number',
         'zip_filename',
         'zip_local_path',
+        'output_filename',
+        'output_local_path',
         'drive_folder_id',
         'drive_file_id',
         'generated_pdf_count',
@@ -29,6 +33,7 @@ class AttachmentPackageRun extends Model
 
     protected $casts = [
         'meta' => 'array',
+        'selected_documents' => 'array',
         'started_at' => 'datetime',
         'finished_at' => 'datetime',
     ];

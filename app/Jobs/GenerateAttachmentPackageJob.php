@@ -4,12 +4,16 @@ namespace App\Jobs;
 
 use App\Events\GamificationActivityTriggered;
 use App\Models\AttachmentPackageRun;
+use App\Models\User;
 use App\Services\AttachmentPackageService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Filament\Notifications\Actions\Action as NotificationAction;
+use Filament\Notifications\Events\DatabaseNotificationsSent;
+use Filament\Notifications\Notification as FilamentNotification;
 
 class GenerateAttachmentPackageJob implements ShouldQueue
 {
@@ -55,6 +59,8 @@ class GenerateAttachmentPackageJob implements ShouldQueue
                 ]),
             ]);
 
+            $this->notifyRequester($run, true);
+
             if ((int) $run->user_id > 0 && (int) $run->project_id > 0) {
                 event(new GamificationActivityTriggered('pdf_package_generated', (int) $run->user_id, [
                     'project_id' => (int) $run->project_id,
@@ -72,6 +78,7 @@ class GenerateAttachmentPackageJob implements ShouldQueue
                     'heartbeat_at' => now()->toDateTimeString(),
                 ]),
             ]);
+            $this->notifyRequester($run, false);
             throw $e;
         }
     }
@@ -97,5 +104,33 @@ class GenerateAttachmentPackageJob implements ShouldQueue
                 'heartbeat_at' => now()->toDateTimeString(),
             ]),
         ]);
+        $this->notifyRequester($run, false);
+    }
+
+    private function notifyRequester(AttachmentPackageRun $run, bool $success): void
+    {
+        $user = User::query()->find((int) $run->user_id);
+        if (!$user) {
+            return;
+        }
+
+        $projectName = (string) ($run->project?->nombre_clave ?: $run->project?->nombre ?: ('Proyecto #' . $run->project_id));
+        $outputLabel = strtoupper((string) ($run->output_type ?: 'zip'));
+
+        $notification = FilamentNotification::make()
+            ->title($success ? 'Paquete PDF finalizado' : 'Paquete PDF falló')
+            ->body($success
+                ? "{$projectName}: ya está listo el archivo {$outputLabel}."
+                : "{$projectName}: no se pudo generar el paquete. " . ((string) $run->error_message ?: 'Revisa el historial para más detalle.'))
+            ->icon($success ? 'heroicon-o-check-circle' : 'heroicon-o-x-circle')
+            ->iconColor($success ? 'success' : 'danger')
+            ->actions([
+                NotificationAction::make('open')
+                    ->label('Ver paquete')
+                    ->url(route('filament.admin.resources.projects.attachments', ['record' => $run->project_id]), shouldOpenInNewTab: false),
+            ]);
+
+        $user->notifyNow($notification->toDatabase());
+        DatabaseNotificationsSent::dispatch($user);
     }
 }

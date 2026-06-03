@@ -23,6 +23,7 @@ class Project extends Model
         'ruta_drive',
         'drive_folder_id',
         'attachments_min_percent',
+        'attachment_package_selection',
         'formulador_id',
         'estructurador_id',
         'prioridad_entidad_id',
@@ -39,6 +40,7 @@ class Project extends Model
         'fecha_creacion' => 'date',
         'valor' => 'decimal:2',
         'attachments_min_percent' => 'integer',
+        'attachment_package_selection' => 'array',
         'duracion_meses' => 'integer',
         'poblacion_objetivo' => 'integer',
     ];

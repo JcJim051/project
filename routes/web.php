@@ -72,6 +72,7 @@ Route::middleware([
     Route::get('/projects/{project}/attachments-pdf/runs', [AttachmentPackageRunController::class, 'index'])->name('projects.attachments.runs.index');
     Route::post('/projects/{project}/attachments-pdf/runs', [AttachmentPackageRunController::class, 'store'])->name('projects.attachments.runs.store');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}', [AttachmentPackageRunController::class, 'show'])->name('projects.attachments.runs.show');
+    Route::get('/projects/{project}/attachments-pdf/runs/{run}/preview', [AttachmentPackageRunController::class, 'preview'])->name('projects.attachments.runs.preview');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}/download', [AttachmentPackageRunController::class, 'download'])->name('projects.attachments.runs.download');
     Route::post('/projects/{project}/mga-transfer/send', [ProjectTransferRequestController::class, 'send'])->name('projects.mga_transfer.send');
     Route::post('/projects/{project}/mga-transfer/{transferRequest}/approve', [ProjectTransferRequestController::class, 'approve'])->name('projects.mga_transfer.approve');

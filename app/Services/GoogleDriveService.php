@@ -280,6 +280,27 @@ class GoogleDriveService
         return $this->listFilesInFolder($folderId, $userId);
     }
 
+    public function listDirectRequirementFiles(Project $project, Requirement $requirement, ?int $userId = null): array
+    {
+        $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, false);
+        $folderId = $resolved['id'] ?? null;
+        if (!$folderId) {
+            return [
+                'folder_label' => $resolved['label'] ?? ($requirement->carpeta ?: 'Sin carpeta'),
+                'items' => collect(),
+                'total' => 0,
+            ];
+        }
+
+        $items = $this->listFilesInFolder($folderId, $userId);
+
+        return [
+            'folder_label' => $resolved['label'] ?? ($requirement->carpeta ?: 'Sin carpeta'),
+            'items' => $items->values(),
+            'total' => $items->count(),
+        ];
+    }
+
     public function listRequirementFiles(
         Project $project,
         Requirement $requirement,

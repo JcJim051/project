@@ -13,14 +13,16 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
 
 
 def sanitize_name(value: str) -> str:
     value = value.replace("ñ", "n").replace("Ñ", "N")
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
-    value = re.sub(r"[^A-Za-z0-9 _.-]+", "", value)
-    value = re.sub(r"\s+", "_", value.strip())
-    value = value.strip("._-")
+    value = value.replace(".", " ").replace("_", " ")
+    value = re.sub(r"[^A-Za-z0-9 -]+", "", value)
+    value = re.sub(r"\s+", " ", value.strip())
+    value = value.strip(" -")
     return value or "archivo"
 
 
@@ -29,38 +31,104 @@ def create_cover_pdf(title: str, files: List[Dict[str, str]], logo_path: str | N
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
 
-    y = height - 1.0 * inch
-    if logo_path:
+    top_margin = 0.6 * inch
+    side_margin = 0.8 * inch
+    bottom_margin = 0.8 * inch
+    header_height = 0.0
+    font_name = "Helvetica"
+
+    def wrap_text(text: str, font: str, size: int, max_width: float) -> List[str]:
+        words = text.split()
+        lines: List[str] = []
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if pdfmetrics.stringWidth(candidate, font, size) <= max_width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines
+
+    def draw_clip_icon(x: float, y: float) -> None:
+        # Vector paperclip icon, avoids emoji/font rendering issues.
+        c.saveState()
+        c.translate(x, y)
+        c.rotate(-28)
+        c.setLineWidth(1.2)
+        c.roundRect(0, 0, 7, 15, 3.5, stroke=1, fill=0)
+        c.roundRect(1.8, 3, 3.5, 8.5, 1.8, stroke=1, fill=0)
+        c.restoreState()
+
+    def draw_logo() -> float:
+        nonlocal header_height
+        header_height = 0.0
+        if not logo_path:
+            return header_height
         logo = Path(logo_path)
-        if logo.exists():
-            try:
-                # 2.5x respecto al tamaño previo (1.8" x 0.8")
-                logo_w = 4.5 * inch
-                logo_h = 2.0 * inch
-                logo_x = (width - logo_w) / 2.0
-                logo_y = height - 0.8 * inch - logo_h
-                c.drawImage(str(logo), logo_x, logo_y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask="auto")
-                y = logo_y - (0.25 * inch)
-            except Exception:
-                pass
+        if not logo.exists():
+            return header_height
+        try:
+            # 10% larger than the previous 4.5" x 2.0" logo size.
+            logo_w = 4.95 * inch
+            logo_h = 2.2 * inch
+            logo_x = (width - logo_w) / 2.0
+            logo_y = height - top_margin - logo_h
+            c.drawImage(str(logo), logo_x, logo_y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask="auto")
+            header_height = logo_h + 0.25 * inch
+        except Exception:
+            header_height = 0.0
+        return header_height
+
+    draw_logo()
+    y = height - top_margin - header_height
 
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(0.8 * inch, y, f"Adjuntos para: {title}")
-    y -= 0.35 * inch
-    c.setFont("Helvetica", 10)
-    c.drawString(0.8 * inch, y, "Listado de adjuntos:")
+    c.drawString(side_margin, y, f"Adjuntos para: {title}")
+    y -= 0.45 * inch
+    c.setFont(font_name, 10)
+    c.drawString(side_margin, y, "Listado de adjuntos:")
     y -= 0.25 * inch
 
-    if not files:
-        c.drawString(1.0 * inch, y, "(ninguno)")
+    ordered_files = sorted(files, key=lambda item: str(item.get("name", "")).lower())
+    if not ordered_files:
+        c.drawString(side_margin + 0.2 * inch, y, "(ninguno)")
+        y -= 0.22 * inch
     else:
-        for item in files:
-            if y < 1.0 * inch:
+        for item in ordered_files:
+            if y < bottom_margin + 0.4 * inch:
                 c.showPage()
-                y = height - 1.0 * inch
-                c.setFont("Helvetica", 10)
-            c.drawString(1.0 * inch, y, item["name"])
+                draw_logo()
+                y = height - top_margin - header_height
+                c.setFont(font_name, 10)
+            c.drawString(side_margin + 0.2 * inch, y, item["name"])
             y -= 0.2 * inch
+
+    note_text = (
+        "Nota: Los documentos relacionados en este listado están adjuntos dentro de este PDF. "
+        "Para visualizarlos, ubique la sección de adjuntos en su visor (ícono de clip)."
+    )
+    note_font_size = 10
+    note_text_x = side_margin + 0.35 * inch
+    note_max_width = width - note_text_x - side_margin
+    note_lines = wrap_text(note_text, font_name, note_font_size, note_max_width)
+    note_line_height = 0.2 * inch
+    note_required_height = (len(note_lines) * note_line_height) + (0.2 * inch)
+
+    if y < bottom_margin + 0.4 * inch + note_required_height:
+        c.showPage()
+        draw_logo()
+        y = height - top_margin - header_height
+
+    y -= 0.2 * inch
+    c.setFont(font_name, note_font_size)
+    draw_clip_icon(side_margin, y - 0.08 * inch)
+    for line in note_lines:
+        c.drawString(note_text_x, y, line)
+        y -= note_line_height
 
     c.showPage()
     c.save()
@@ -116,7 +184,7 @@ def main() -> int:
         base_name = sanitize_name(title)
         if not base_name:
             base_name = sanitize_name(str(doc.get("base_name") or title))
-        files = doc.get("files") or []
+        files = sorted(doc.get("files") or [], key=lambda item: str(item.get("name", "")).lower())
         output_name = f"{base_name}_V{version_number}.pdf"
         output_name = sanitize_name(output_name[:-4]) + ".pdf"
         original_output_name = output_name

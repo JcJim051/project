@@ -6,6 +6,7 @@ use App\Jobs\GenerateAttachmentPackageJob;
 use App\Models\AttachmentPackageRun;
 use App\Models\Project;
 use App\Models\RequirementEvidence;
+use App\Services\AttachmentPackageService;
 use App\Services\RequirementProgressService;
 use Illuminate\Http\Request;
 
@@ -24,6 +25,8 @@ class AttachmentPackageRunController extends Controller
                 'status',
                 'version_number',
                 'zip_filename',
+                'output_type',
+                'output_filename',
                 'generated_pdf_count',
                 'missing_count',
                 'error_message',
@@ -43,7 +46,7 @@ class AttachmentPackageRunController extends Controller
             ->with('status', 'La generación de paquetes se gestiona desde esta vista.');
     }
 
-    public function store(Project $project)
+    public function store(Project $project, Request $request)
     {
         $this->authorizeProjectMutation();
         $this->expireStaleRuns($project->id);
@@ -67,11 +70,30 @@ class AttachmentPackageRunController extends Controller
             ]);
         }
 
+        /** @var AttachmentPackageService $packageService */
+        $packageService = app(AttachmentPackageService::class);
+        $availableKeys = collect($packageService->availablePackageDocuments($project))->pluck('key')->all();
+        $selected = collect($request->input('selected_documents', []))
+            ->map(fn ($key) => (string) $key)
+            ->filter(fn ($key) => in_array($key, $availableKeys, true))
+            ->values()
+            ->all();
+
+        if (empty($selected)) {
+            return back()->withErrors([
+                'attachments_package' => 'Selecciona al menos una cartera para generar.',
+            ]);
+        }
+
+        $project->forceFill(['attachment_package_selection' => $selected])->save();
+
         $run = AttachmentPackageRun::query()->create([
             'project_id' => $project->id,
             'user_id' => auth()->id(),
             'status' => 'pending',
             'progress_percent_snapshot' => $percent,
+            'selected_documents' => $selected,
+            'output_type' => count($selected) === 1 ? 'pdf' : 'zip',
         ]);
 
         GenerateAttachmentPackageJob::dispatch($run->id)->onConnection('database');
@@ -90,7 +112,9 @@ class AttachmentPackageRunController extends Controller
             'status' => $run->status,
             'version_number' => $run->version_number,
             'zip_filename' => $run->zip_filename,
-            'zip_available_local' => $run->zip_local_path && file_exists($run->zip_local_path),
+            'zip_available_local' => $this->runLocalPath($run) && file_exists($this->runLocalPath($run)),
+            'output_type' => $run->output_type ?: 'zip',
+            'output_filename' => $run->output_filename ?: $run->zip_filename,
             'generated_pdf_count' => $run->generated_pdf_count,
             'missing_count' => $run->missing_count,
             'stage_label' => data_get($run->meta, 'stage_label'),
@@ -102,15 +126,36 @@ class AttachmentPackageRunController extends Controller
         ]);
     }
 
+    public function preview(Project $project, AttachmentPackageRun $run)
+    {
+        abort_unless($run->project_id === $project->id, 404);
+        abort_unless(($run->output_type ?: 'zip') === 'pdf', 404);
+        $path = $this->runLocalPath($run);
+        abort_unless($path && file_exists($path), 404);
+
+        $filename = $run->output_filename ?: basename($path);
+
+        return response()->file($path, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="' . addslashes($filename) . '"',
+        ]);
+    }
+
     public function download(Project $project, AttachmentPackageRun $run)
     {
         abort_unless($run->project_id === $project->id, 404);
-        abort_unless($run->zip_local_path && file_exists($run->zip_local_path), 404);
+        $path = $this->runLocalPath($run);
+        abort_unless($path && file_exists($path), 404);
 
         return response()->download(
-            $run->zip_local_path,
-            $run->zip_filename ?: ('Adjuntos_V' . ($run->version_number ?? 1) . '.zip')
+            $path,
+            $run->output_filename ?: $run->zip_filename ?: ('Adjuntos_V' . ($run->version_number ?? 1) . '.zip')
         );
+    }
+
+    private function runLocalPath(AttachmentPackageRun $run): ?string
+    {
+        return $run->output_local_path ?: $run->zip_local_path;
     }
 
     private function overallPercent(Project $project): int
