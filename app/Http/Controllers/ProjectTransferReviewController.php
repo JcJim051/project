@@ -8,6 +8,7 @@ use App\Models\ProjectTransferRequest;
 use App\Models\ProjectTransferRequestRequirementComment;
 use App\Models\RequirementEvidence;
 use App\Models\User;
+use App\Services\MgaTransferAuthorizationService;
 use App\Services\OfficialEmailNotificationService;
 use Filament\Notifications\Actions\Action as NotificationAction;
 use Filament\Notifications\Events\DatabaseNotificationsSent;
@@ -107,17 +108,34 @@ class ProjectTransferReviewController extends Controller
 
     public function decide(Request $request, ProjectTransferRequest $transferRequest, string $decision): RedirectResponse
     {
-        $this->authorizeDecide($transferRequest);
+        $this->authorizeView($transferRequest);
 
         abort_unless(in_array($decision, ['approve', 'reject'], true), 404);
+        abort_if($transferRequest->status !== 'pending', 422, 'La solicitud ya fue decidida.');
 
         $validated = $request->validate([
             'decision_note' => ['required', 'string'],
+            'approval_scope' => ['nullable', 'in:direction,planning'],
         ], [
             'decision_note.required' => 'El comentario es obligatorio.',
         ]);
 
-        abort_if($transferRequest->status !== 'pending', 422, 'La solicitud ya fue decidida.');
+        $user = $request->user();
+        /** @var MgaTransferAuthorizationService $service */
+        $service = app(MgaTransferAuthorizationService::class);
+        $scope = (string) ($validated['approval_scope'] ?? '');
+        if ($scope === '') {
+            $scope = $user?->canAuthorizeDirectorMgaTransfer() ? 'direction' : 'planning';
+        }
+
+        if ($scope === 'planning') {
+            abort_unless($service->requiresPlanningApproval(), 422, 'La aprobación de Planeación AIM no está activa.');
+            abort_unless($user && $user->canAuthorizePlanningMgaTransfer(), 403);
+            abort_if((string) $transferRequest->planning_status !== 'pending', 422, 'Planeación AIM ya decidió esta solicitud.');
+        } else {
+            abort_unless($user && $user->canAuthorizeDirectorMgaTransfer(), 403);
+            abort_if((string) $transferRequest->director_status !== 'pending', 422, 'Dirección ya decidió esta solicitud.');
+        }
 
         $commentLines = $transferRequest->requirementComments()
             ->with('requirement:id,numeracion,nombre_documento,requisito')
@@ -141,25 +159,23 @@ class ProjectTransferReviewController extends Controller
             $consolidated .= "\n\nObservaciones por requisito:\n" . $commentLines->implode("\n");
         }
 
-        $transferRequest->update([
-            'status' => $decision === 'approve' ? 'approved' : 'rejected',
-            'decision_note' => $consolidated,
-            'decided_at' => now(),
-            'decided_by_user_id' => auth()->id(),
-        ]);
+        $beforeStatus = (string) $transferRequest->status;
+        $transferRequest = $scope === 'planning'
+            ? $service->decidePlanning($transferRequest, $user, $decision, $consolidated)
+            : $service->decideDirection($transferRequest, $user, $decision, $consolidated);
 
-        if ($decision === 'approve' && (int) $transferRequest->requested_by_user_id > 0) {
+        if ((string) $transferRequest->status === 'approved' && $beforeStatus !== 'approved' && (int) $transferRequest->requested_by_user_id > 0) {
             event(new GamificationActivityTriggered('mga_approved', (int) $transferRequest->requested_by_user_id, [
                 'project_id' => (int) $transferRequest->project_id,
                 'metadata' => ['transfer_request_id' => (int) $transferRequest->id],
             ]));
         }
 
-        $this->notifyProjectTeamDecision($transferRequest, $decision);
+        $this->notifyProjectTeamDecision($transferRequest, $decision, $scope, $service);
 
         return redirect()
             ->route('filament.admin.resources.project-transfer-requests.index')
-            ->with('status', $decision === 'approve' ? 'Solicitud aprobada.' : 'Solicitud rechazada.');
+            ->with('status', $this->decisionFlashMessage($transferRequest, $decision, $scope, $service));
     }
 
     private function authorizeView(ProjectTransferRequest $transferRequest): void
@@ -260,7 +276,7 @@ class ProjectTransferReviewController extends Controller
         return null;
     }
 
-    private function notifyProjectTeamDecision(ProjectTransferRequest $transferRequest, string $decision): void
+    private function notifyProjectTeamDecision(ProjectTransferRequest $transferRequest, string $decision, string $scope, MgaTransferAuthorizationService $service): void
     {
         $project = $transferRequest->project()->first();
         if (!$project) {
@@ -271,8 +287,19 @@ class ProjectTransferReviewController extends Controller
             (int) $project->formulador_id,
             (int) $project->estructurador_id,
             (int) $transferRequest->requested_by_user_id,
-        ])->filter(fn ($id) => $id > 0)->unique()->values();
+        ])->filter(fn ($id) => $id > 0);
 
+        if ($scope === 'planning') {
+            $directorIds = User::query()
+                ->where(function ($query): void {
+                    $query->where('is_admin', true)
+                        ->orWhereHas('roles', fn ($q) => $q->whereIn('slug', ['admin', 'director', 'formulador_maestro']));
+                })
+                ->pluck('id');
+            $ids = $ids->merge($directorIds);
+        }
+
+        $ids = $ids->unique()->values();
         if ($ids->isEmpty()) {
             return;
         }
@@ -283,17 +310,23 @@ class ProjectTransferReviewController extends Controller
         }
 
         $isApproved = $decision === 'approve';
+        $scopeLabel = $scope === 'planning' ? 'Planeación AIM' : 'Dirección';
         $projectName = (string) ($project->nombre_clave ?: $project->nombre ?: ('Proyecto #' . $project->id));
-        $title = $isApproved ? 'Solicitud MGA aprobada' : 'Solicitud MGA rechazada';
-        $body = $isApproved
-            ? "{$projectName} fue aprobado en revisión interna."
-            : "{$projectName} fue rechazado en revisión interna.";
+        $title = $isApproved ? "{$scopeLabel} aprobó la solicitud" : "{$scopeLabel} observó la solicitud";
+        if ($isApproved && $service->isApprovalComplete($transferRequest)) {
+            $body = "{$projectName}: la aprobación interna quedó completa y ya se pueden generar carteras.";
+        } elseif ($isApproved) {
+            $pending = $scope === 'planning' ? 'Dirección' : 'Planeación AIM';
+            $body = "{$projectName}: {$scopeLabel} aprobó. Sigue pendiente aprobación de {$pending}.";
+        } else {
+            $body = "{$projectName}: {$scopeLabel} registró observaciones. Corrige y envía una nueva solicitud.";
+        }
 
         $notification = FilamentNotification::make()
             ->title($title)
             ->body($body)
-            ->icon($isApproved ? 'heroicon-o-check-circle' : 'heroicon-o-x-circle')
-            ->iconColor($isApproved ? 'success' : 'danger')
+            ->icon($isApproved ? 'heroicon-o-check-circle' : 'heroicon-o-exclamation-triangle')
+            ->iconColor($isApproved ? 'success' : 'warning')
             ->actions([
                 NotificationAction::make('open')
                     ->label('Abrir gestionar')
@@ -309,7 +342,20 @@ class ProjectTransferReviewController extends Controller
             $project,
             $users,
             $decision,
-            $transferRequest->decision_note
+            $scopeLabel . ': ' . ($transferRequest->decision_note ?: '')
         );
     }
+    private function decisionFlashMessage(ProjectTransferRequest $transferRequest, string $decision, string $scope, MgaTransferAuthorizationService $service): string
+    {
+        $scopeLabel = $scope === 'planning' ? 'Planeación AIM' : 'Dirección';
+        if ($decision !== 'approve') {
+            return "{$scopeLabel} registró observaciones. El equipo deberá enviar una nueva solicitud cuando corrija.";
+        }
+        if ($service->isApprovalComplete($transferRequest)) {
+            return 'Aprobación interna completa. El módulo de carteras quedó habilitado.';
+        }
+        $pending = $scope === 'planning' ? 'Dirección' : 'Planeación AIM';
+        return "{$scopeLabel} aprobó. Sigue pendiente aprobación de {$pending}.";
+    }
+
 }

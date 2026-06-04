@@ -6,6 +6,7 @@ use App\Events\GamificationActivityTriggered;
 use App\Models\AttachmentPackageRun;
 use App\Models\User;
 use App\Services\AttachmentPackageService;
+use App\Services\OfficialEmailNotificationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -60,6 +61,7 @@ class GenerateAttachmentPackageJob implements ShouldQueue
             ]);
 
             $this->notifyRequester($run, true);
+            $this->notifyProjectTeamPackageGenerated($run);
 
             if ((int) $run->user_id > 0 && (int) $run->project_id > 0) {
                 event(new GamificationActivityTriggered('pdf_package_generated', (int) $run->user_id, [
@@ -107,6 +109,66 @@ class GenerateAttachmentPackageJob implements ShouldQueue
         $this->notifyRequester($run, false);
     }
 
+
+    private function notifyProjectTeamPackageGenerated(AttachmentPackageRun $run): void
+    {
+        $project = $run->project;
+        if (!$project) {
+            return;
+        }
+
+        $ids = collect([
+            (int) $project->formulador_id,
+            (int) $project->estructurador_id,
+            (int) $run->user_id,
+        ])->filter(fn ($id) => $id > 0);
+
+        $directorIds = User::query()
+            ->where(function ($query): void {
+                $query->where('is_admin', true)
+                    ->orWhereHas('roles', fn ($q) => $q->whereIn('slug', ['admin', 'director', 'formulador_maestro']));
+            })
+            ->pluck('id');
+
+        $ids = $ids->merge($directorIds)->unique()->values();
+        if ($ids->isEmpty()) {
+            return;
+        }
+
+        $users = User::query()->whereIn('id', $ids->all())->get();
+        if ($users->isEmpty()) {
+            return;
+        }
+
+        $projectName = (string) ($project->nombre_clave ?: $project->nombre ?: ('Proyecto #' . $project->id));
+        $outputLabel = strtoupper((string) ($run->output_type ?: 'zip'));
+        $notification = FilamentNotification::make()
+            ->title('Carteras generadas')
+            ->body("{$projectName}: ya está listo el archivo {$outputLabel} de carteras.")
+            ->icon('heroicon-o-document-check')
+            ->iconColor('success')
+            ->actions([
+                NotificationAction::make('open')
+                    ->label('Ver paquete')
+                    ->url(route('filament.admin.resources.projects.attachments', ['record' => $run->project_id]), shouldOpenInNewTab: false),
+            ]);
+
+        foreach ($users as $user) {
+            $user->notifyNow($notification->toDatabase());
+            DatabaseNotificationsSent::dispatch($user);
+        }
+
+        app(OfficialEmailNotificationService::class)->sendProjectEvent(
+            $project,
+            $users,
+            'Carteras generadas: ' . $projectName,
+            'Carteras generadas',
+            'Paquete PDF listo',
+            "Ya está listo el archivo {$outputLabel} de carteras.",
+            route('filament.admin.resources.projects.attachments', ['record' => $run->project_id]),
+            'Ver paquete'
+        );
+    }
     private function notifyRequester(AttachmentPackageRun $run, bool $success): void
     {
         $user = User::query()->find((int) $run->user_id);

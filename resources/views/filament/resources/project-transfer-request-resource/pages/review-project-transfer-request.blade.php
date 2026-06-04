@@ -3,7 +3,8 @@
         x-data="transferReviewApp({
             groups: @js($reviewGroups),
             saveUrl: @js(route('project-transfer-requests.comments', $transferRequest)),
-            csrf: @js(csrf_token())
+            csrf: @js(csrf_token()),
+            highlightBankDocuments: @js($highlightBankDocumentsForPlanning)
         })"
         class="space-y-4"
     >
@@ -17,24 +18,6 @@
                     </p>
                 </div>
                 <div class="flex items-center gap-2">
-                    @if ($transferRequest->status === 'pending')
-                        <form method="POST" action="{{ route('project-transfer-requests.decide', ['transferRequest' => $transferRequest, 'decision' => 'approve']) }}">
-                            @csrf
-                            <input type="hidden" name="decision_note" value="Aprobado tras revisión interna por requisito.">
-                            <button type="submit" class="inline-flex h-10 items-center rounded-md px-4 text-sm font-semibold"
-                                    style="background:#16a34a;color:#ffffff;border:1px solid #15803d;">
-                                Aceptar
-                            </button>
-                        </form>
-                        <form method="POST" action="{{ route('project-transfer-requests.decide', ['transferRequest' => $transferRequest, 'decision' => 'reject']) }}">
-                            @csrf
-                            <input type="hidden" name="decision_note" value="Rechazado tras revisión interna por requisito.">
-                            <button type="submit" class="inline-flex h-10 items-center rounded-md px-4 text-sm font-semibold"
-                                    style="background:#dc2626;color:#ffffff;border:1px solid #b91c1c;">
-                                Rechazar
-                            </button>
-                        </form>
-                    @endif
                     <a href="{{ route('filament.admin.resources.project-transfer-requests.index') }}" class="inline-flex h-9 items-center rounded-md border border-gray-300 px-3 text-sm text-gray-700 hover:bg-gray-50">
                         Volver
                     </a>
@@ -44,6 +27,100 @@
                  :class="flash.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'"
                  x-text="flash.message"></div>
         </div>
+
+
+        <div class="grid gap-3 md:grid-cols-2">
+            <div class="rounded-xl border border-gray-200 bg-white p-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <div class="text-sm font-semibold text-gray-900">Concepto Dirección</div>
+                        <div class="mt-1 text-xs text-gray-600">
+                            Estado: <span class="font-semibold uppercase">{{ $transferRequest->director_status ?: 'pending' }}</span>
+                            @if ($transferRequest->director_decided_at)
+                                · {{ optional($transferRequest->director_decided_at)->format('Y-m-d H:i') }}
+                            @endif
+                        </div>
+                        @if ($transferRequest->directorDecidedBy)
+                            <div class="mt-1 text-xs text-gray-500">Por: {{ $transferRequest->directorDecidedBy->name }}</div>
+                        @endif
+                    </div>
+                    @if ($transferRequest->status === 'pending' && $canDecideDirection && ($transferRequest->director_status ?: 'pending') === 'pending')
+                        <div class="flex flex-wrap items-center justify-end gap-2">
+                            <form method="POST" action="{{ route('project-transfer-requests.decide', ['transferRequest' => $transferRequest, 'decision' => 'approve']) }}">
+                                @csrf
+                                <input type="hidden" name="approval_scope" value="direction">
+                                <input type="hidden" name="decision_note" value="Aprobado por Dirección tras revisión interna.">
+                                <button type="submit" class="inline-flex h-9 items-center rounded-md px-3 text-xs font-semibold" style="background:#16a34a;color:#ffffff;border:1px solid #15803d;">Aprobar</button>
+                            </form>
+                            <form method="POST" action="{{ route('project-transfer-requests.decide', ['transferRequest' => $transferRequest, 'decision' => 'reject']) }}">
+                                @csrf
+                                <input type="hidden" name="approval_scope" value="direction">
+                                <input type="hidden" name="decision_note" value="Observado por Dirección tras revisión interna.">
+                                <button type="submit" class="inline-flex h-9 items-center rounded-md px-3 text-xs font-semibold" style="background:#dc2626;color:#ffffff;border:1px solid #b91c1c;">Observar</button>
+                            </form>
+                        </div>
+                    @endif
+                </div>
+                @if ($transferRequest->director_note)
+                    <div class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-2 text-xs text-gray-700 whitespace-pre-line">{{ $transferRequest->director_note }}</div>
+                @endif
+            </div>
+
+            <div class="rounded-xl border {{ $requiresPlanningApproval ? 'border-amber-200 bg-amber-50/40' : 'border-gray-200 bg-white' }} p-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <div class="text-sm font-semibold text-gray-900">Concepto Planeación AIM</div>
+                        <div class="mt-1 text-xs text-gray-600">
+                            @if ($requiresPlanningApproval)
+                                Estado: <span class="font-semibold uppercase">{{ $transferRequest->planning_status ?: 'pending' }}</span>
+                                @if ($transferRequest->planning_decided_at)
+                                    · {{ optional($transferRequest->planning_decided_at)->format('Y-m-d H:i') }}
+                                @endif
+                            @else
+                                No requerido actualmente.
+                            @endif
+                        </div>
+                        @if ($transferRequest->planningDecidedBy)
+                            <div class="mt-1 text-xs text-gray-500">Por: {{ $transferRequest->planningDecidedBy->name }}</div>
+                        @endif
+                    </div>
+                    @if ($requiresPlanningApproval && $transferRequest->status === 'pending' && $canDecidePlanning && ($transferRequest->planning_status ?: 'pending') === 'pending')
+                        <div class="flex flex-wrap items-center justify-end gap-2">
+                            <form method="POST" action="{{ route('project-transfer-requests.decide', ['transferRequest' => $transferRequest, 'decision' => 'approve']) }}">
+                                @csrf
+                                <input type="hidden" name="approval_scope" value="planning">
+                                <input type="hidden" name="decision_note" value="Aprobado por Planeación AIM tras revisión interna.">
+                                <button type="submit" class="inline-flex h-9 items-center rounded-md px-3 text-xs font-semibold" style="background:#16a34a;color:#ffffff;border:1px solid #15803d;">Aprobar</button>
+                            </form>
+                            <form method="POST" action="{{ route('project-transfer-requests.decide', ['transferRequest' => $transferRequest, 'decision' => 'reject']) }}">
+                                @csrf
+                                <input type="hidden" name="approval_scope" value="planning">
+                                <input type="hidden" name="decision_note" value="Observado por Planeación AIM tras revisión interna.">
+                                <button type="submit" class="inline-flex h-9 items-center rounded-md px-3 text-xs font-semibold" style="background:#d97706;color:#ffffff;border:1px solid #b45309;">Observar</button>
+                            </form>
+                        </div>
+                    @endif
+                </div>
+                @if ($transferRequest->planning_note)
+                    <div class="mt-3 rounded-md border border-gray-200 bg-white p-2 text-xs text-gray-700 whitespace-pre-line">{{ $transferRequest->planning_note }}</div>
+                @endif
+            </div>
+        </div>
+
+        @if ($approvalComplete)
+            <div class="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+                Aprobación interna completa. El módulo de carteras queda habilitado.
+            </div>
+        @elseif ($transferRequest->status === 'pending')
+            <div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Aprobación interna pendiente.
+                @if ($requiresPlanningApproval)
+                    Se requiere doble llave: Dirección + Planeación AIM.
+                @else
+                    Actualmente solo se requiere aprobación de Dirección.
+                @endif
+            </div>
+        @endif
 
         <div style="display:grid; grid-template-columns:40% 60%; gap:1rem; align-items:start;">
             <section class="rounded-xl border border-gray-200 bg-white p-4 overflow-y-auto" style="min-width:0; height:84vh;">
@@ -55,12 +132,15 @@
                         </summary>
                         <div class="p-2 space-y-2">
                             <template x-for="folder in group.folders" :key="group.code + '-' + folder.name">
-                                <div class="rounded-md border border-gray-200">
-                                    <div class="flex items-center justify-between px-2 py-2 bg-white">
-                                        <div class="text-xs font-semibold text-gray-700" x-text="folder.name"></div>
-                                        <div class="text-[11px] text-gray-500" x-text="folder.progress"></div>
-                                    </div>
-                                    <div class="px-2 pb-2 space-y-1">
+                                <details class="rounded-md border" :class="(highlightBankDocuments && folder.is_bank_documents) ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100 shadow-sm' : 'border-gray-200'">
+                                    <summary class="flex cursor-pointer select-none items-center justify-between px-2 py-2" :class="(highlightBankDocuments && folder.is_bank_documents) ? 'bg-emerald-100/70' : 'bg-white'">
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <div class="text-xs font-semibold" :class="(highlightBankDocuments && folder.is_bank_documents) ? 'text-emerald-900' : 'text-gray-700'" x-text="folder.name"></div>
+                                            <span x-show="highlightBankDocuments && folder.is_bank_documents" class="rounded-full border border-emerald-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-emerald-800">Revisión prioritaria</span>
+                                        </div>
+                                        <div class="text-[11px]" :class="(highlightBankDocuments && folder.is_bank_documents) ? 'text-emerald-800 font-bold' : 'text-gray-500'" x-text="folder.progress"></div>
+                                    </summary>
+                                    <div class="px-2 pb-2 pt-2 space-y-1">
                                         <template x-for="req in folder.items" :key="req.id">
                                             <div class="rounded-md border" :class="selectedRequirement && selectedRequirement.id === req.id ? 'border-primary-400 bg-primary-50/40' : 'border-gray-200'">
                                                 <button type="button" @click="selectRequirement(req.id)" class="w-full text-left rounded-md px-2 py-2 text-xs"
@@ -97,7 +177,7 @@
                                             </div>
                                         </template>
                                     </div>
-                                </div>
+                                </details>
                             </template>
                         </div>
                     </details>
@@ -146,6 +226,7 @@
                 groups: config.groups || [],
                 saveUrl: config.saveUrl,
                 csrf: config.csrf,
+                highlightBankDocuments: Boolean(config.highlightBankDocuments),
                 flat: [],
                 selectedRequirement: null,
                 selectedEvidenceId: null,

@@ -8,6 +8,7 @@ use App\Models\Project;
 use App\Models\RequirementEvidence;
 use App\Services\AttachmentPackageService;
 use App\Services\AttachmentPdfRuntime;
+use App\Services\MgaTransferAuthorizationService;
 use App\Services\RequirementProgressService;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
@@ -41,6 +42,11 @@ class ManageProjectAttachments extends Page
             ->limit(20)
             ->get();
         $activeRun = $attachmentRuns->first(fn (AttachmentPackageRun $run) => in_array($run->status, ['pending', 'running'], true));
+        /** @var MgaTransferAuthorizationService $mgaService */
+        $mgaService = app(MgaTransferAuthorizationService::class);
+        $currentTransferRequest = $mgaService->current($project);
+        $approvalComplete = $mgaService->isApprovalComplete($currentTransferRequest);
+        $requiresPlanningApproval = $mgaService->requiresPlanningApproval();
         $availableDocuments = app(AttachmentPackageService::class)->availablePackageDocuments($project);
         $availableKeys = collect($availableDocuments)->pluck('key')->all();
         $rememberedSelection = collect($project->attachment_package_selection ?: [])
@@ -54,7 +60,10 @@ class ManageProjectAttachments extends Page
             'project' => $project,
             'overallPercent' => $overallPercent,
             'attachmentsMinPercent' => $attachmentsMinPercent,
-            'canGenerateAttachmentPackage' => $overallPercent >= $attachmentsMinPercent,
+            'canGenerateAttachmentPackage' => $overallPercent >= $attachmentsMinPercent && $approvalComplete,
+            'attachmentApprovalComplete' => $approvalComplete,
+            'attachmentRequiresPlanningApproval' => $requiresPlanningApproval,
+            'attachmentCurrentTransferRequest' => $currentTransferRequest,
             'attachmentRuns' => $attachmentRuns,
             'attachmentPdfHealth' => $this->buildAttachmentPdfHealth(),
             'availableAttachmentDocuments' => $availableDocuments,

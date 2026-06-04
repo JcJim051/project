@@ -7,6 +7,7 @@ use App\Models\AttachmentPackageRun;
 use App\Models\Project;
 use App\Models\RequirementEvidence;
 use App\Services\AttachmentPackageService;
+use App\Services\MgaTransferAuthorizationService;
 use App\Services\RequirementProgressService;
 use Illuminate\Http\Request;
 
@@ -68,6 +69,15 @@ class AttachmentPackageRunController extends Controller
             return back()->withErrors([
                 'attachments_package' => "La generación de adjuntos se habilita a partir de {$minPercent}%.",
             ]);
+        }
+
+        /** @var MgaTransferAuthorizationService $mgaService */
+        $mgaService = app(MgaTransferAuthorizationService::class);
+        if (!$mgaService->isApprovalComplete($mgaService->current($project))) {
+            $message = $mgaService->requiresPlanningApproval()
+                ? 'La generación de carteras requiere aprobación interna de Dirección y Planeación AIM.'
+                : 'La generación de carteras requiere aprobación interna de Dirección.';
+            return back()->withErrors(['attachments_package' => $message]);
         }
 
         /** @var AttachmentPackageService $packageService */

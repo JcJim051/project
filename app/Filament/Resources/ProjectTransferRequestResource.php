@@ -35,11 +35,13 @@ class ProjectTransferRequestResource extends Resource
                     ->openUrlInNewTab(false)
                     ->color('primary')
                     ->weight('semibold'),
-                TextColumn::make('status')->badge(),
+                TextColumn::make('status')->label('Estado general')->badge(),
+                TextColumn::make('director_status')->label('Dirección')->badge()->toggleable(),
+                TextColumn::make('planning_status')->label('Planeación AIM')->badge()->toggleable(),
                 TextColumn::make('requestedBy.name')->label('Solicitó')->toggleable(),
                 TextColumn::make('requested_at')->label('Enviado')->dateTime('Y-m-d H:i'),
-                TextColumn::make('decidedBy.name')->label('Decidió')->toggleable(),
-                TextColumn::make('decided_at')->label('Decisión')->dateTime('Y-m-d H:i'),
+                TextColumn::make('directorDecidedBy.name')->label('Dir. decidió')->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('planningDecidedBy.name')->label('Plan. decidió')->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('decision_note')->label('Comentario')->limit(60)->wrap(),
                 TextColumn::make('receipts_count')->label('Acuses'),
             ])
@@ -64,7 +66,7 @@ class ProjectTransferRequestResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return parent::getEloquentQuery()
-            ->with(['project', 'requestedBy', 'decidedBy'])
+            ->with(['project', 'requestedBy', 'decidedBy', 'directorDecidedBy', 'planningDecidedBy'])
             ->withCount('receipts');
     }
 

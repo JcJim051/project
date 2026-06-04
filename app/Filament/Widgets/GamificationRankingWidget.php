@@ -14,6 +14,13 @@ class GamificationRankingWidget extends Widget
 
     protected static ?int $sort = 2;
 
+
+    public static function canView(): bool
+    {
+        $user = auth()->user();
+
+        return (bool) ($user && !$user->isPlanningAimOnlyUser());
+    }
     protected function getViewData(): array
     {
         $year = (int) now()->year;

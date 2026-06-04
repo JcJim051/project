@@ -101,6 +101,6 @@ class GamificationRanking extends Page
     public static function canAccess(): bool
     {
         $user = auth()->user();
-        return (bool) ($user && $user->canAccessPanel());
+        return (bool) ($user && $user->canAccessPanel() && !$user->isPlanningAimOnlyUser());
     }
 }

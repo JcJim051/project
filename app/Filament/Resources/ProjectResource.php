@@ -982,7 +982,7 @@ class ProjectResource extends Resource
     {
         $user = auth()->user();
 
-        return (bool) ($user && $user->canAccessPanel());
+        return (bool) ($user && $user->canAccessPanel() && !$user->isPlanningAimOnlyUser());
     }
 
     public static function canCreate(): bool

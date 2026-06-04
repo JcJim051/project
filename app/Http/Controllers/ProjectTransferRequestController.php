@@ -55,7 +55,7 @@ class ProjectTransferRequestController extends Controller
     public function approve(Project $project, ProjectTransferRequest $transferRequest, Request $request, MgaTransferAuthorizationService $service)
     {
         $user = $request->user();
-        if (!$user || !$user->canAuthorizeMgaTransfer()) {
+        if (!$user || !$user->canAuthorizeDirectorMgaTransfer()) {
             abort(403);
         }
 
@@ -76,7 +76,7 @@ class ProjectTransferRequestController extends Controller
     public function reject(Project $project, ProjectTransferRequest $transferRequest, Request $request, MgaTransferAuthorizationService $service)
     {
         $user = $request->user();
-        if (!$user || !$user->canAuthorizeMgaTransfer()) {
+        if (!$user || !$user->canAuthorizeDirectorMgaTransfer()) {
             abort(403);
         }
 
@@ -140,7 +140,7 @@ class ProjectTransferRequestController extends Controller
 
     private function notifyEvaluators(Project $project, ProjectTransferRequest $transferRequest, User $sender, ?string $note): void
     {
-        $roleSlugs = ['admin', 'director', 'formulador_maestro'];
+        $roleSlugs = ['admin', 'director', 'formulador_maestro', 'planeacion_aim'];
         $users = User::query()
             ->where(function ($query) use ($roleSlugs) {
                 $query->where('is_admin', true)
@@ -175,5 +175,40 @@ class ProjectTransferRequestController extends Controller
         }
 
         app(OfficialEmailNotificationService::class)->sendMgaSubmitted($project, $users, $sender, $note, $transferRequest);
+
+        $teamIds = collect([
+            (int) $project->formulador_id,
+            (int) $project->estructurador_id,
+            (int) $sender->id,
+        ])->filter(fn ($id) => $id > 0)->unique()->values();
+        $team = User::query()->whereIn('id', $teamIds->all())->get();
+        if ($team->isNotEmpty()) {
+            $teamNotification = FilamentNotification::make()
+                ->title('Proyecto enviado a evaluación interna')
+                ->body("{$projectName}: la solicitud fue enviada a revisión de Dirección" . (app(\App\Services\ProcessSettingsService::class)->requirePlanningAimApproval() ? ' y Planeación AIM.' : '.'))
+                ->icon('heroicon-o-paper-airplane')
+                ->iconColor('info')
+                ->actions([
+                    NotificationAction::make('open')
+                        ->label('Abrir gestionar')
+                        ->url(route('filament.admin.resources.projects.manage', ['record' => $project]), shouldOpenInNewTab: false),
+                ]);
+
+            foreach ($team as $targetUser) {
+                $targetUser->notifyNow($teamNotification->toDatabase());
+                DatabaseNotificationsSent::dispatch($targetUser);
+            }
+
+            app(OfficialEmailNotificationService::class)->sendProjectEvent(
+                $project,
+                $team,
+                'Proyecto enviado a evaluación interna: ' . $projectName,
+                'Proyecto enviado a evaluación interna',
+                'Solicitud en revisión',
+                'La solicitud fue enviada a revisión interna. Te notificaremos cuando haya una decisión.',
+                route('filament.admin.resources.projects.manage', ['record' => $project]),
+                'Abrir proyecto'
+            );
+        }
     }
 }

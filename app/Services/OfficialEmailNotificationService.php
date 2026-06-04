@@ -79,6 +79,23 @@ class OfficialEmailNotificationService
         }
     }
 
+
+    public function sendProjectEvent(Project $project, Collection $users, string $subject, string $title, string $eventLabel, ?string $detail, ?string $actionUrl, ?string $actionLabel): void
+    {
+        $mail = new ProjectEventMail(
+            $subject,
+            $title,
+            $this->projectName($project),
+            $eventLabel,
+            $detail,
+            $actionUrl,
+            $actionLabel
+        );
+
+        foreach ($users as $user) {
+            $this->sendToUser($user, $mail);
+        }
+    }
     private function sendToUser(?User $user, ProjectEventMail $mail): void
     {
         if (!$user || empty($user->email)) {

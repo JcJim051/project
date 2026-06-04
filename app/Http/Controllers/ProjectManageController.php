@@ -93,6 +93,7 @@ class ProjectManageController extends Controller
         /** @var MgaTransferAuthorizationService $mgaService */
         $mgaService = app(MgaTransferAuthorizationService::class);
         $transferRequest = $mgaService->current($project);
+        $attachmentApprovalComplete = $mgaService->isApprovalComplete($transferRequest);
         $canTransferToMga = $mgaService->canTransfer($project, $overallPercent);
         $assigned = collect([
             $project->formulador_id => $project->formulador?->name ?? 'Formulador',
@@ -133,7 +134,9 @@ class ProjectManageController extends Controller
             'attachmentRuns' => $attachmentRuns,
             'attachmentPdfHealth' => $attachmentPdfHealth,
             'attachmentsMinPercent' => $attachmentsMinPercent,
-            'canGenerateAttachmentPackage' => $overallPercent >= $attachmentsMinPercent,
+            'canGenerateAttachmentPackage' => $overallPercent >= $attachmentsMinPercent && $attachmentApprovalComplete,
+            'attachmentApprovalComplete' => $attachmentApprovalComplete,
+            'attachmentRequiresPlanningApproval' => $mgaService->requiresPlanningApproval(),
             'transferRequest' => $transferRequest,
             'canTransferToMga' => $canTransferToMga,
             'canRequestTransfer' => $canRequestTransfer,

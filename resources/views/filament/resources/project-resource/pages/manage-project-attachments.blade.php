@@ -20,7 +20,19 @@
             </div>
 
             @if (!$canGenerateAttachmentPackage)
-                <p class="mt-2 text-xs text-amber-700">Aun no se habilita: el proyecto debe estar al {{ $attachmentsMinPercent }}%.</p>
+                <div class="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    @if ($overallPercent < $attachmentsMinPercent)
+                        Aún no se habilita: el proyecto debe estar al {{ $attachmentsMinPercent }}%.
+                    @elseif (!$attachmentApprovalComplete)
+                        @if ($attachmentRequiresPlanningApproval)
+                            Pendiente aprobación interna completa: Dirección + Planeación AIM.
+                        @else
+                            Pendiente aprobación interna de Dirección.
+                        @endif
+                    @else
+                        Aún no se habilita la generación.
+                    @endif
+                </div>
             @endif
         </div>
 

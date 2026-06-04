@@ -125,6 +125,7 @@ class User extends Authenticatable implements HasAvatar
             'estructurador',
             'consulta',
             'formulador_maestro',
+            'planeacion_aim',
         ]);
     }
 
@@ -171,7 +172,26 @@ class User extends Authenticatable implements HasAvatar
 
     public function canAuthorizeMgaTransfer(): bool
     {
+        return $this->canAuthorizeDirectorMgaTransfer() || $this->canAuthorizePlanningMgaTransfer();
+    }
+
+    public function canAuthorizeDirectorMgaTransfer(): bool
+    {
         return $this->isAdminUser() || $this->hasAnyRole(['director', 'formulador_maestro']);
+    }
+
+    public function canAuthorizePlanningMgaTransfer(): bool
+    {
+        return $this->isAdminUser() || $this->hasRole('planeacion_aim');
+    }
+
+    public function isPlanningAimOnlyUser(): bool
+    {
+        if (!$this->hasRole('planeacion_aim') || $this->isAdminUser()) {
+            return false;
+        }
+
+        return !$this->hasAnyRole(['director', 'formulador_maestro', 'formulador', 'estructurador']);
     }
 
     public function hasPermission(string $slug): bool

@@ -5,6 +5,7 @@ namespace App\Filament\Resources\ProjectTransferRequestResource\Pages;
 use App\Filament\Resources\ProjectTransferRequestResource;
 use App\Models\ProjectTransferRequest;
 use App\Models\RequirementEvidence;
+use App\Services\MgaTransferAuthorizationService;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
 
@@ -28,7 +29,7 @@ class ReviewProjectTransferRequest extends Page
     public function mount(int|string $record): void
     {
         $this->record = $this->resolveRecord($record);
-        $this->record->load(['project.sectores', 'requestedBy', 'decidedBy']);
+        $this->record->load(['project.sectores', 'requestedBy', 'decidedBy', 'directorDecidedBy', 'planningDecidedBy']);
 
         abort_unless(auth()->user()?->canAuthorizeMgaTransfer(), 403);
     }
@@ -58,74 +59,102 @@ class ReviewProjectTransferRequest extends Page
 
         $groupedPayload = $this->buildReviewSections($requirements, $evidenceByRequirement, $comments, $previousComments);
 
+        /** @var MgaTransferAuthorizationService $mgaService */
+        $mgaService = app(MgaTransferAuthorizationService::class);
+        $user = auth()->user();
+
         return [
             'transferRequest' => $this->record,
             'project' => $project,
             'reviewGroups' => $groupedPayload,
+            'requiresPlanningApproval' => $mgaService->requiresPlanningApproval(),
+            'approvalComplete' => $mgaService->isApprovalComplete($this->record),
+            'canDecideDirection' => (bool) $user?->canAuthorizeDirectorMgaTransfer(),
+            'canDecidePlanning' => (bool) $user?->canAuthorizePlanningMgaTransfer(),
+            'highlightBankDocumentsForPlanning' => (bool) ($user?->hasRole('planeacion_aim') && ! $user?->isAdminUser()),
         ];
     }
 
     private function buildReviewSections($requirements, $evidenceByRequirement, $comments, array $previousComments = []): array
     {
-        $folders = collect($requirements)->groupBy(fn ($req) => (string) ($req->carpeta ?: 'Sin carpeta'));
         $top = [];
+        $groupedItems = [];
 
-        foreach ($folders as $folderName => $items) {
-            $sample = $items->first();
-            $code = $this->detectTopGroupCode((string) $folderName)
-                ?? $this->detectTopGroupCode((string) ($sample->numeracion ?? ''))
-                ?? $this->detectTopGroupCode((string) ($sample->codigo_interno ?? ''))
+        foreach ($requirements as $req) {
+            $folderName = (string) ($req->carpeta ?: 'Sin carpeta');
+            $code = $this->detectTopGroupCode($folderName)
+                ?? $this->detectTopGroupCode((string) ($req->numeracion ?? ''))
+                ?? $this->detectTopGroupCode((string) ($req->codigo_interno ?? ''))
                 ?? '99';
+
             if (!in_array($code, ['01', '02', '03', '04', '05'], true)) {
                 continue;
             }
 
-            $done = $items->filter(fn ($req) => ($evidenceByRequirement[$req->id] ?? collect())->isNotEmpty())->count();
-            $folderPayload = [
-                'name' => $this->stripFolderPrefix((string) $folderName),
-                'progress' => $done . ' / ' . $items->count(),
-                'items' => $items->map(function ($req) use ($evidenceByRequirement, $comments, $previousComments) {
-                    $currentRow = $comments[$req->id] ?? null;
-                    $currentComment = (string) ($currentRow?->comment ?? '');
-                    $currentAuthor = (string) ($currentRow?->author?->name ?? '');
-                    $currentDate = optional($currentRow?->updated_at)->format('Y-m-d H:i') ?? '';
-                    $fallbackPrev = $this->resolvePreviousCommentForRequirement($req, $previousComments);
-                    $evidences = ($evidenceByRequirement[$req->id] ?? collect())->map(function ($ev) {
-                        return [
-                            'id' => (int) $ev->id,
-                            'name' => (string) ($ev->drive_file_name ?: 'Archivo'),
-                            'preview_url' => $ev->drive_file_id ? 'https://drive.google.com/file/d/' . $ev->drive_file_id . '/preview' : null,
-                            'view_url' => $ev->drive_file_id ? 'https://drive.google.com/file/d/' . $ev->drive_file_id . '/view' : null,
-                        ];
-                    })->values()->all();
-
-                    return [
-                        'id' => (int) $req->id,
-                        'title' => trim((string) ($req->nombre_documento ?: $req->requisito)),
-                        'folder' => (string) ($req->carpeta ?: 'Sin carpeta'),
-                        'evidences' => $evidences,
-                        'comment' => $currentComment,
-                        'previous_comment' => (string) (($previousComments['by_requirement_id'][$req->id]['comment'] ?? '') !== ''
-                            ? $previousComments['by_requirement_id'][$req->id]['comment']
-                            : ($fallbackPrev['comment'] ?? $currentComment)),
-                        'previous_author' => (string) (($previousComments['by_requirement_id'][$req->id]['author'] ?? '') !== ''
-                            ? $previousComments['by_requirement_id'][$req->id]['author']
-                            : ($fallbackPrev['author'] ?? $currentAuthor)),
-                        'previous_date' => (string) (($previousComments['by_requirement_id'][$req->id]['date'] ?? '') !== ''
-                            ? $previousComments['by_requirement_id'][$req->id]['date']
-                            : ($fallbackPrev['date'] ?? $currentDate)),
-                    ];
-                })->values()->all(),
-            ];
-
-            if (!isset($top[$code])) {
-                $top[$code] = [
-                    'code' => $code,
-                    'label' => $this->groupLabels[$code] ?? ('Grupo ' . $code),
-                    'folders' => [],
-                ];
+            if ($code === '01') {
+                $bucket = $this->formulationBucketForRequirement($req);
+                $folderName = $bucket['name'];
             }
-            $top[$code]['folders'][] = $folderPayload;
+
+            $groupedItems[$code][$folderName][] = $req;
+        }
+
+        foreach ($groupedItems as $code => $folders) {
+            foreach ($folders as $folderName => $itemsArray) {
+                $items = collect($itemsArray)->sortBy([
+                    fn ($a, $b) => ((int) ($a->orden ?? 0)) <=> ((int) ($b->orden ?? 0)),
+                    fn ($a, $b) => strcmp((string) ($a->codigo_interno ?? ''), (string) ($b->codigo_interno ?? '')),
+                    fn ($a, $b) => strcmp((string) ($a->nombre_documento ?? $a->requisito ?? ''), (string) ($b->nombre_documento ?? $b->requisito ?? '')),
+                ])->values();
+
+                $done = $items->filter(fn ($req) => ($evidenceByRequirement[$req->id] ?? collect())->isNotEmpty())->count();
+                $folderPayload = [
+                    'name' => $code === '01' ? (string) $folderName : $this->stripFolderPrefix((string) $folderName),
+                    'is_bank_documents' => $this->isBankDocumentsFolder((string) $folderName),
+                    'progress' => $done . ' / ' . $items->count(),
+                    'items' => $items->map(function ($req) use ($evidenceByRequirement, $comments, $previousComments) {
+                        $currentRow = $comments[$req->id] ?? null;
+                        $currentComment = (string) ($currentRow?->comment ?? '');
+                        $currentAuthor = (string) ($currentRow?->author?->name ?? '');
+                        $currentDate = optional($currentRow?->updated_at)->format('Y-m-d H:i') ?? '';
+                        $fallbackPrev = $this->resolvePreviousCommentForRequirement($req, $previousComments);
+                        $evidences = ($evidenceByRequirement[$req->id] ?? collect())->map(function ($ev) {
+                            return [
+                                'id' => (int) $ev->id,
+                                'name' => (string) ($ev->drive_file_name ?: 'Archivo'),
+                                'preview_url' => $ev->drive_file_id ? 'https://drive.google.com/file/d/' . $ev->drive_file_id . '/preview' : null,
+                                'view_url' => $ev->drive_file_id ? 'https://drive.google.com/file/d/' . $ev->drive_file_id . '/view' : null,
+                            ];
+                        })->values()->all();
+
+                        return [
+                            'id' => (int) $req->id,
+                            'title' => trim((string) ($req->nombre_documento ?: $req->requisito)),
+                            'folder' => (string) ($req->carpeta ?: 'Sin carpeta'),
+                            'evidences' => $evidences,
+                            'comment' => $currentComment,
+                            'previous_comment' => (string) (($previousComments['by_requirement_id'][$req->id]['comment'] ?? '') !== ''
+                                ? $previousComments['by_requirement_id'][$req->id]['comment']
+                                : ($fallbackPrev['comment'] ?? $currentComment)),
+                            'previous_author' => (string) (($previousComments['by_requirement_id'][$req->id]['author'] ?? '') !== ''
+                                ? $previousComments['by_requirement_id'][$req->id]['author']
+                                : ($fallbackPrev['author'] ?? $currentAuthor)),
+                            'previous_date' => (string) (($previousComments['by_requirement_id'][$req->id]['date'] ?? '') !== ''
+                                ? $previousComments['by_requirement_id'][$req->id]['date']
+                                : ($fallbackPrev['date'] ?? $currentDate)),
+                        ];
+                    })->values()->all(),
+                ];
+
+                if (!isset($top[$code])) {
+                    $top[$code] = [
+                        'code' => $code,
+                        'label' => $this->groupLabels[$code] ?? ('Grupo ' . $code),
+                        'folders' => [],
+                    ];
+                }
+                $top[$code]['folders'][] = $folderPayload;
+            }
         }
 
         $ordered = [];
@@ -139,6 +168,32 @@ class ReviewProjectTransferRequest extends Page
         return $ordered;
     }
 
+
+    private function formulationBucketForRequirement($req): array
+    {
+        $code = trim((string) ($req->codigo_interno ?? $req->orden ?? $req->numeracion ?? ''));
+
+        if (preg_match('/^1\.06(\b|\s|\.|$)/', $code)) {
+            return ['key' => 'bank', 'name' => 'Documentos del Banco'];
+        }
+        if (preg_match('/^1\.13(\b|\s|\.|$)/', $code)) {
+            return ['key' => 'strategic', 'name' => 'Proyecto Estrategico'];
+        }
+        if (preg_match('/^1\.0[1-5](\b|\s|\.|$)/', $code)) {
+            return ['key' => 'general', 'name' => 'Requisitos Generales'];
+        }
+
+        return ['key' => 'support', 'name' => 'Otros Soportes'];
+    }
+    private function isBankDocumentsFolder(string $folderName): bool
+    {
+        $normalized = mb_strtolower(trim(\Illuminate\Support\Str::ascii($folderName)));
+
+        return str_contains($normalized, 'documentos del banco')
+            || str_contains($normalized, 'banco de proyectos')
+            || preg_match('/\b1\.0?5\b/', $normalized)
+            || preg_match('/\b1\.0?6\b/', $normalized);
+    }
     private function getActiveRequirementsForProject($project)
     {
         $requirements = $project->requisitos()
