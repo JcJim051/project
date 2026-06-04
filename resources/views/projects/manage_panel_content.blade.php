@@ -653,10 +653,7 @@
                         return `${req.composite_done || 0}/${req.composite_total || 0} documentos requeridos cargados`;
                     }
                     if (!req.has_evidence) return "Pendiente";
-                    if (req.fulfillment_source === "manual") return "Suplido manual";
-                    if (req.fulfillment_source === "auto") return "Suplido auto";
-                    if (req.fulfillment_source === "upload") return "Cargado";
-                    return "Suplido";
+                    return "Cargado";
                 },
                 fulfillmentClass(req) {
                     if (!req) return "bg-gray-100 text-gray-600";
