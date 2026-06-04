@@ -406,6 +406,46 @@ class GoogleDriveService
         ];
     }
 
+    public function renameRequirementFolderToPreferred(Project $project, Requirement $requirement, ?int $userId = null): ?array
+    {
+        if (!$project->drive_folder_id || !$this->isEstudioRequirement($requirement)) {
+            return null;
+        }
+
+        $preferred = $this->preferredStudyFolderName($requirement);
+        if ($preferred === '') {
+            return null;
+        }
+
+        $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, false);
+        $folderId = $resolved['id'] ?? null;
+        if (!$folderId) {
+            return null;
+        }
+
+        $drive = $this->drive($userId);
+        $current = $drive->files->get($folderId, ['fields' => 'id,name,mimeType']);
+        $currentName = (string) ($current->name ?? '');
+        if ($currentName === '' || $currentName === $preferred) {
+            return [
+                'id' => $folderId,
+                'name' => $currentName ?: $preferred,
+                'changed' => false,
+            ];
+        }
+
+        $updated = $drive->files->update($folderId, new DriveFile(['name' => $preferred]), [
+            'fields' => 'id,name,mimeType',
+        ]);
+
+        return [
+            'id' => $updated->id ?? $folderId,
+            'name' => $updated->name ?? $preferred,
+            'old_name' => $currentName,
+            'changed' => true,
+        ];
+    }
+
     public function deleteFile(string $fileId, ?int $userId = null): void
     {
         $drive = $this->drive($userId);
@@ -916,7 +956,7 @@ class GoogleDriveService
             return ['id' => null, 'label' => $estudiosFolderName];
         }
 
-        $studyName = $this->cleanStudyFolderName($this->studyFolderName($requirement));
+        $studyName = $this->preferredStudyFolderName($requirement);
         if ($studyName === '') {
             return ['id' => $estudiosFolderId, 'label' => $estudiosFolderName];
         }
@@ -1149,6 +1189,22 @@ class GoogleDriveService
         return trim((string) ($requirement->carpeta ?? ''));
     }
 
+    private function preferredStudyFolderName(Requirement $requirement): string
+    {
+        $code = trim((string) ($requirement->codigo_interno ?? $requirement->numeracion ?? ''));
+        $name = $this->cleanStudyFolderName($this->studyFolderName($requirement));
+
+        if ($name === '') {
+            return '';
+        }
+
+        if (preg_match('/^\s*(5\.\d+)/', $code, $matches)) {
+            return trim($matches[1] . ' ' . $name);
+        }
+
+        return $name;
+    }
+
     private function cleanStudyFolderName(string $value): string
     {
         $value = trim($value);
@@ -1279,12 +1335,45 @@ class GoogleDriveService
         return Str::endsWith(Str::lower($name), '.pdf');
     }
 
+    public function validatesEvidence(string $name, ?string $mimeType, Requirement $requirement): bool
+    {
+        return $this->isValidEvidence($name, $mimeType, $requirement);
+    }
+
     private function isValidEvidence(string $name, ?string $mimeType, Requirement $requirement): bool
     {
         $requirementName = Str::lower(Str::ascii($requirement->nombre_documento ?? $requirement->requisito ?? ''));
         $fileName = Str::lower($name);
 
-        if (Str::contains($requirementName, 'excel')) {
+        if (Str::contains($requirementName, 'localizacion kml') || Str::contains($requirementName, 'localizacion klm')) {
+            if (Str::endsWith($fileName, ['.kml', '.klm'])) {
+                return true;
+            }
+            if (in_array($mimeType, [
+                'application/vnd.google-earth.kml+xml',
+                'application/vnd.google-earth.kmz',
+                'application/xml',
+                'text/xml',
+            ], true)) {
+                return true;
+            }
+        }
+
+        if (Str::contains($requirementName, 'presentacion')) {
+            if (Str::endsWith($fileName, ['.ppt', '.pptx']) || $this->isPdfFile($name, $mimeType)) {
+                return true;
+            }
+            if (in_array($mimeType, [
+                'application/vnd.google-apps.presentation',
+                'application/vnd.ms-powerpoint',
+                'application/powerpoint',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            ], true)) {
+                return true;
+            }
+        }
+
+        if (Str::contains($requirementName, 'verificacion de requisitos') || Str::contains($requirementName, 'excel')) {
             if (Str::endsWith($fileName, ['.xls', '.xlsx', '.xlsm'])) {
                 return true;
             }
@@ -1292,6 +1381,7 @@ class GoogleDriveService
                 'application/vnd.google-apps.spreadsheet',
                 'application/vnd.ms-excel',
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'application/vnd.ms-excel.sheet.macroenabled.12',
                 'text/csv',
                 'application/csv',
             ], true)) {

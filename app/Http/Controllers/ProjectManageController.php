@@ -314,7 +314,7 @@ class ProjectManageController extends Controller
         $data = $validator->validated();
         $renumerated = $this->buildRenumerationMap($this->getActiveRequirementsForProject($project));
         $prefix = $renumerated[$requirement->id] ?? $requirement->codigo_interno ?? $requirement->numeracion ?? '';
-        $baseName = $requirement->nombre_documento ?: $requirement->requisito;
+        $baseName = $this->renumberBaseName($requirement);
 
         $uploadedCount = 0;
         $index = 1;
@@ -322,7 +322,7 @@ class ProjectManageController extends Controller
         foreach ($data['archivos'] as $archivo) {
             $suffix = $totalFiles > 1 ? " ({$index})" : '';
             $extension = $archivo->getClientOriginalExtension();
-            $targetBase = trim($prefix . ' ' . $baseName) . $suffix;
+            $targetBase = $this->buildRenumberedFileBase($prefix, $baseName, $suffix);
             $targetName = $extension ? $targetBase . '.' . $extension : $targetBase;
 
             Log::info('manage_upload_attempt', [
@@ -470,14 +470,33 @@ class ProjectManageController extends Controller
                 continue;
             }
 
-            $baseName = trim((string) ($requirement->nombre_documento ?: $requirement->requisito));
+            $baseName = $this->renumberBaseName($requirement);
+            if ($this->isEstudioRequirement($requirement)) {
+                try {
+                    $drive->renameRequirementFolderToPreferred($project, $requirement, $userId);
+                } catch (\Throwable $e) {
+                    Log::warning('study_folder_rename_failed', [
+                        'project_id' => $project->id,
+                        'requirement_id' => $requirement->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
             $evidences = RequirementEvidence::query()
                 ->where('project_id', $project->id)
                 ->where('requirement_id', $requirement->id)
                 ->whereNotNull('drive_file_id')
-                ->where('in_drive', true)
                 ->orderBy('id')
-                ->get();
+                ->get()
+                ->filter(function (RequirementEvidence $evidence) use ($drive, $requirement) {
+                    $isValid = $drive->validatesEvidence((string) ($evidence->drive_file_name ?? ''), $evidence->drive_mime_type, $requirement);
+                    if ((bool) $evidence->in_drive !== $isValid) {
+                        $evidence->forceFill(['in_drive' => $isValid])->save();
+                    }
+                    return $isValid;
+                })
+                ->values();
 
             $total = $evidences->count();
             $index = 1;
@@ -485,7 +504,7 @@ class ProjectManageController extends Controller
                 $currentName = (string) ($evidence->drive_file_name ?? '');
                 $extension = pathinfo($currentName, PATHINFO_EXTENSION);
                 $suffix = $total > 1 ? " ({$index})" : '';
-                $targetBase = trim($prefix . ' ' . $baseName) . $suffix;
+                $targetBase = $this->buildRenumberedFileBase($prefix, $baseName, $suffix);
                 $targetName = $extension !== '' ? $targetBase . '.' . $extension : $targetBase;
 
                 if ($targetName === $currentName) {
@@ -544,6 +563,13 @@ class ProjectManageController extends Controller
 
         $counters = [];
         foreach ($ordered as $req) {
+            if ($this->isEstudioRequirement($req)) {
+                $studyKey = $this->studyRequirementGroupKey($req);
+                $counters[$studyKey] = ($counters[$studyKey] ?? 0) + 1;
+                $map[$req->id] = (string) $counters[$studyKey];
+                continue;
+            }
+
             $groupCode = $this->detectTopGroupCode((string) ($req->carpeta ?? '')) ?? '99';
             $major = ltrim($groupCode, '0');
             if ($major === '') {
@@ -556,6 +582,53 @@ class ProjectManageController extends Controller
         }
 
         return $map;
+    }
+
+    private function renumberBaseName(Requirement $requirement): string
+    {
+        $baseName = trim((string) ($requirement->nombre_documento ?: $requirement->requisito));
+        if ($this->isEstudioRequirement($requirement)) {
+            $baseName = preg_replace('/^\s*\d+(?:\.\d+)?[\s\-_]*/u', '', $baseName);
+            $baseName = trim((string) $baseName);
+        }
+
+        return $baseName !== '' ? $baseName : 'Documento';
+    }
+
+    private function buildRenumberedFileBase(string $prefix, string $baseName, string $suffix = ''): string
+    {
+        $base = trim(implode(' ', array_filter([trim($prefix), trim($baseName)], fn ($part) => $part !== '')));
+        return trim($base . $suffix);
+    }
+
+    private function studyRequirementGroupKey(Requirement $requirement): string
+    {
+        $code = trim((string) ($requirement->codigo_interno ?? $requirement->numeracion ?? ''));
+        if (preg_match('/^\s*(5\.\d+)/', $code, $matches)) {
+            return 'study|' . $matches[1];
+        }
+
+        return 'study|' . $this->normalizeFolderName((string) ($requirement->carpeta ?? 'sin-carpeta'));
+    }
+
+    private function isEstudioRequirement(Requirement $requirement): bool
+    {
+        $folder = $this->normalizeFolderName((string) ($requirement->carpeta ?? ''));
+        $code = trim((string) ($requirement->codigo_interno ?? $requirement->numeracion ?? ''));
+
+        if (str_contains($folder, 'estudios y disenos')) {
+            return true;
+        }
+
+        return (bool) preg_match('/^\s*5(\.|$)/', $code);
+    }
+
+    private function normalizeFolderName(string $value): string
+    {
+        $value = Str::ascii($value);
+        $value = Str::lower($value);
+        $value = preg_replace('/\s+/', ' ', $value);
+        return trim((string) $value);
     }
 
     private function getActiveRequirementsForProject(Project $project)

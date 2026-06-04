@@ -664,17 +664,15 @@
                         return req.has_evidence ? "" : "bg-amber-100 text-amber-700";
                     }
                     if (!req.has_evidence) return "bg-gray-100 text-gray-600";
-                    if (req.fulfillment_source === "manual") return "bg-violet-100 text-violet-700";
-                    if (req.fulfillment_source === "auto") return "bg-emerald-100 text-emerald-700";
-                    if (req.fulfillment_source === "upload") return "";
+                    if (["manual", "auto", "upload"].includes(req.fulfillment_source)) return "";
                     return "bg-sky-100 text-sky-700";
                 },
                 fulfillmentStyle(req) {
                     if (!req) return "";
-                    if (req.is_composite_parent && req.has_evidence) {
-                        return "background:#dcfce7;color:#166534;border:1px solid #bbf7d0;font-weight:700;";
-                    }
-                    if (req.is_composite_parent || req.fulfillment_source !== "upload") return "";
+                    const shouldShowLoadedBadge = req.has_evidence && (
+                        req.is_composite_parent || ["manual", "auto", "upload"].includes(req.fulfillment_source)
+                    );
+                    if (!shouldShowLoadedBadge) return "";
                     return "background:#dcfce7;color:#166534;border:1px solid #bbf7d0;font-weight:700;";
                 },
                 evidenceCountLabel(req) {
