@@ -7,6 +7,7 @@ use App\Models\Project;
 use App\Models\Requirement;
 use App\Models\RequirementEvidence;
 use App\Models\AttachmentPackageRun;
+use App\Models\DriveUploadSession;
 use App\Services\GoogleDriveService;
 use App\Services\AttachmentPdfRuntime;
 use App\Services\MgaTransferAuthorizationService;
@@ -88,6 +89,12 @@ class ProjectManageController extends Controller
             ->latest()
             ->limit(8)
             ->get();
+        $recentDriveUploadSessions = DriveUploadSession::query()
+            ->where('project_id', $project->id)
+            ->where('user_id', auth()->id())
+            ->latest('id')
+            ->limit(8)
+            ->get();
         $attachmentPdfHealth = $this->buildAttachmentPdfHealth();
         $attachmentsMinPercent = max(1, min(100, (int) ($project->attachments_min_percent ?? 80)));
         /** @var MgaTransferAuthorizationService $mgaService */
@@ -132,6 +139,7 @@ class ProjectManageController extends Controller
             'topGroupProgress' => $topGroupProgress,
             'progressAnalysis' => $progressAnalysis,
             'attachmentRuns' => $attachmentRuns,
+            'recentDriveUploadSessions' => $recentDriveUploadSessions,
             'attachmentPdfHealth' => $attachmentPdfHealth,
             'attachmentsMinPercent' => $attachmentsMinPercent,
             'canGenerateAttachmentPackage' => $overallPercent >= $attachmentsMinPercent && $attachmentApprovalComplete,

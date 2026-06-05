@@ -261,6 +261,77 @@ class GoogleDriveService
         ]);
     }
 
+
+    public function createResumableUploadSession(
+        Project $project,
+        Requirement $requirement,
+        string $targetName,
+        string $mimeType,
+        int $sizeBytes,
+        ?int $userId = null
+    ): array {
+        $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, true);
+        $folderId = $resolved['id'] ?? null;
+        if (!$folderId) {
+            throw new \RuntimeException('No se pudo resolver la carpeta destino en Drive: ' . ($resolved['label'] ?? $requirement->carpeta));
+        }
+
+        $client = $this->client($userId);
+        $http = $client->authorize();
+
+        $response = $http->request('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,mimeType,modifiedTime', [
+            'headers' => [
+                'Content-Type' => 'application/json; charset=UTF-8',
+                'X-Upload-Content-Type' => $mimeType ?: 'application/octet-stream',
+                'X-Upload-Content-Length' => (string) max(0, $sizeBytes),
+            ],
+            'json' => [
+                'name' => $targetName,
+                'parents' => [$folderId],
+            ],
+        ]);
+
+        $location = $response->getHeaderLine('Location');
+        if ($location === '') {
+            throw new \RuntimeException('Google Drive no devolvió URL de carga resumible.');
+        }
+
+        return [
+            'upload_url' => $location,
+            'folder_id' => $folderId,
+            'folder_label' => $resolved['label'] ?? $requirement->carpeta,
+        ];
+    }
+
+    public function createUploadedEvidenceFromDriveFile(
+        Project $project,
+        Requirement $requirement,
+        string $driveFileId,
+        ?int $userId = null,
+        ?string $note = null
+    ): RequirementEvidence {
+        $fileMeta = $this->getDriveFileMeta($driveFileId, $userId);
+
+        return RequirementEvidence::updateOrCreate(
+            [
+                'project_id' => $project->id,
+                'drive_file_id' => (string) ($fileMeta['id'] ?? $driveFileId),
+            ],
+            [
+                'requirement_id' => $requirement->id,
+                'drive_file_name' => (string) ($fileMeta['name'] ?? $driveFileId),
+                'drive_mime_type' => $fileMeta['mimeType'] ?? null,
+                'drive_modified_time' => $fileMeta['modifiedTime'] ?? null,
+                'drive_folder_name' => $requirement->carpeta,
+                'source' => 'upload',
+                'linked_by_user_id' => $userId,
+                'linked_at' => now(),
+                'link_note' => $note,
+                'in_drive' => $this->isValidEvidence((string) ($fileMeta['name'] ?? ''), $fileMeta['mimeType'] ?? null, $requirement),
+            ]
+        );
+    }
+
     public function ensureProjectSubfolder(Project $project, string $folderName, ?int $userId = null): ?string
     {
         if (!$project->drive_folder_id) {
@@ -763,6 +834,46 @@ class GoogleDriveService
         if (Storage::disk('local')->exists($path)) {
             Storage::disk('local')->delete($path);
         }
+    }
+
+
+    public function findDirectFileInFolderByName(string $folderId, string $fileName, ?int $userId = null, ?int $expectedSize = null): ?array
+    {
+        $drive = $this->drive($userId);
+        $response = $this->listDriveFiles($drive, [
+            'q' => sprintf(
+                "'%s' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder' and name = '%s'",
+                $this->escapeDriveQueryValue($folderId),
+                $this->escapeDriveQueryValue($fileName)
+            ),
+            'fields' => 'files(id,name,mimeType,modifiedTime,size)',
+            'pageSize' => 20,
+            'orderBy' => 'modifiedTime desc',
+        ]);
+
+        $files = collect($response->files ?? []);
+        if ($expectedSize !== null && $expectedSize > 0) {
+            $matchedBySize = $files->first(fn ($file) => (int) ($file->size ?? 0) === (int) $expectedSize);
+            if ($matchedBySize) {
+                $file = $matchedBySize;
+            } else {
+                return null;
+            }
+        } else {
+            $file = $files->first();
+        }
+
+        if (!$file) {
+            return null;
+        }
+
+        return [
+            'id' => $file->id,
+            'name' => $file->name,
+            'mimeType' => $file->mimeType,
+            'modifiedTime' => $file->modifiedTime,
+            'size' => $file->size ?? null,
+        ];
     }
 
     private function listFilesInFolder(string $folderId, ?int $userId = null): Collection

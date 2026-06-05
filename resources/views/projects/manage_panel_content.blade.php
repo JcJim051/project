@@ -111,6 +111,7 @@
                         ? 'Este requisito se cumple automáticamente con los documentos activos de la carpeta ' . $compositeFolder . '.'
                         : null,
                     'upload_url' => route('projects.manage.upload', [$project, $req]),
+                    'large_upload_init_url' => route('projects.requirements.uploads.init', [$project, $req]),
                     'edit_url' => route('filament.admin.resources.requirements.edit', ['record' => $req]),
                     'drive_files_url' => route('projects.drive.files', $project),
                     'link_drive_url' => route('projects.requirements.link_drive_file', [$project, $req]),
@@ -445,6 +446,12 @@
                 bulkRows: [],
                 bulkReport: null,
                 uploadBusy: false,
+                uploadQueue: [],
+                uploadActiveCount: 0,
+                uploadMaxConcurrent: 1,
+                uploadDefaultChunkSize: 8388608,
+                uploadQueueSeq: 0,
+                uploadModalOpen: false,
                 uploadMessage: '',
                 uploadMessageType: '',
                 uploadTimer: null,
@@ -1004,76 +1011,433 @@
                         this.customCertificationBusy = false;
                     }
                 },
-                async uploadCurrentRequirement(event) {
+                queueStatusLabel(item) {
+                    const labels = {
+                        pending: 'En espera',
+                        initializing: 'Preparando',
+                        uploading: 'Cargando',
+                        completed: 'Completado',
+                        failed: 'Falló',
+                        cancelled: 'Cancelado',
+                    };
+                    return labels[item?.status] || item?.status || 'Pendiente';
+                },
+                queueStatusClass(item) {
+                    const status = item?.status || 'pending';
+                    if (status === 'completed') return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+                    if (status === 'failed') return 'bg-rose-50 text-rose-700 border-rose-200';
+                    if (status === 'cancelled') return 'bg-gray-50 text-gray-500 border-gray-200';
+                    if (status === 'uploading' || status === 'initializing') return 'bg-blue-50 text-blue-700 border-blue-200';
+                    return 'bg-amber-50 text-amber-700 border-amber-200';
+                },
+                queueStatusStyle(item) {
+                    const status = item?.status || 'pending';
+                    if (status === 'completed') return 'background:#dcfce7;color:#166534;border-color:#86efac;';
+                    if (status === 'failed') return 'background:#fff1f2;color:#be123c;border-color:#fecdd3;';
+                    if (status === 'cancelled') return 'background:#f8fafc;color:#64748b;border-color:#e2e8f0;';
+                    if (status === 'uploading' || status === 'initializing') return 'background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe;';
+                    return 'background:#fffbeb;color:#b45309;border-color:#fde68a;';
+                },
+                uploadProgressPercent(item) {
+                    const progress = Number(item?.progress || 0);
+                    return Math.max(0, Math.min(100, progress));
+                },
+                uploadProgressStyle(item) {
+                    const progress = this.uploadProgressPercent(item);
+                    return `width:${progress}%;background:linear-gradient(90deg,#16a34a,#84cc16);`;
+                },
+                formatBytes(bytes) {
+                    const n = Number(bytes || 0);
+                    if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+                    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+                    if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+                    return `${n} B`;
+                },
+                enqueueCurrentRequirement(event) {
                     const req = this.currentRequirement();
-                    if (!req || this.uploadBusy) return;
+                    if (!req) return;
                     if (req.is_composite_parent) {
                         this.setUploadMessage('error', req.composite_message || 'Este requisito se cumple automáticamente con sus documentos requeridos.');
                         return;
                     }
-
-                    const form = event?.target;
-                    if (!form) return;
-                    const input = form.querySelector('input[name="archivos[]"]');
-                    if (!input || !input.files || input.files.length === 0) {
-                        this.setUploadMessage('error', 'Debes seleccionar al menos un archivo.');
+                    const input = event?.target;
+                    if (!input || !input.files || input.files.length === 0) return;
+                    const file = input.files[0];
+                    this.uploadQueue = this.uploadQueue.filter(item => ['initializing', 'uploading'].includes(item.status));
+                    this.uploadQueueSeq += 1;
+                    this.uploadQueue.push({
+                        local_id: `${Date.now()}-${this.uploadQueueSeq}`,
+                        requirement_id: req.id,
+                        requirement_title: req.title,
+                        init_url: req.large_upload_init_url,
+                        file,
+                        name: file.name,
+                        size: file.size,
+                        mime_type: file.type || 'application/octet-stream',
+                        index: 1,
+                        total: 1,
+                        status: 'pending',
+                        completed_by_verify: false,
+                        progress: 0,
+                        uploaded_bytes: 0,
+                        session: null,
+                        error: '',
+                        abortController: null,
+                    });
+                    input.value = '';
+                    this.setUploadMessage('success', 'Archivo listo. Presiona Cargar para iniciar.');
+                },
+                hasPendingUpload() {
+                    return this.uploadQueue.some(item => item.status === 'pending');
+                },
+                processUploadQueue() {
+                    this.uploadModalOpen = true;
+                    if (this.uploadActiveCount > 0) {
+                        this.setUploadMessage('error', 'Ya hay una carga en proceso. Espera a que termine o cancélala.');
                         return;
                     }
 
-                    const formData = new FormData(form);
-                    this.uploadBusy = true;
-                    this.setUploadMessage('', '');
+                    const next = this.uploadQueue.find(item => item.status === 'pending');
+                    if (!next) {
+                        this.setUploadMessage('error', 'Selecciona un archivo antes de cargar.');
+                        return;
+                    }
 
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 90000);
-
+                    this.runUploadQueueItem(next);
+                },
+                closeUploadModal() {
+                    this.uploadModalOpen = false;
+                },
+                uploadModalTitle() {
+                    if (this.uploadActiveCount > 0) return 'Cargando archivo a Drive';
+                    if (this.uploadQueue.some(item => item.status === 'completed')) return 'Carga finalizada';
+                    if (this.uploadQueue.some(item => item.status === 'failed')) return 'Carga con novedad';
+                    return 'Archivo listo para cargar';
+                },
+                async runUploadQueueItem(item) {
+                    this.uploadActiveCount += 1;
+                    item.abortController = new AbortController();
                     try {
-                        const response = await fetch(req.upload_url, {
-                            method: 'POST',
-                            body: formData,
-                            headers: {
-                                'Accept': 'application/json',
-                                'X-Requested-With': 'XMLHttpRequest',
-                                'X-CSRF-TOKEN': this.csrfToken,
-                            },
-                            credentials: 'same-origin',
-                            signal: controller.signal,
-                        });
-
-                        const data = await response.json().catch(() => ({}));
-                        if (!response.ok || !data.ok) {
-                            throw new Error(data.message || 'No se pudo completar la carga, intenta de nuevo.');
-                        }
-
-                        const updated = data.requirement || null;
-                        if (updated && this.requirements[req.id]) {
-                            const existing = this.requirements[req.id];
-                            const existingById = new Map((existing.evidences || []).map(e => [e.id, e]));
-                            const mergedEvidences = (updated.evidences || []).map(e => {
-                                const prev = existingById.get(e.id) || {};
-                                return {
-                                    ...prev,
-                                    ...e,
-                                    unlink_url: prev.unlink_url || e.unlink_url || null,
-                                };
+                        item.status = 'initializing';
+                        let chunkSize = this.uploadDefaultChunkSize;
+                        if (!item.session?.upload_url) {
+                            const initResponse = await fetch(item.init_url, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json',
+                                    'X-CSRF-TOKEN': this.csrfToken,
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                },
+                                credentials: 'same-origin',
+                                body: JSON.stringify({
+                                    name: item.name,
+                                    size: item.size,
+                                    mime_type: item.mime_type,
+                                    index: item.index,
+                                    total: item.total,
+                                }),
                             });
-                            existing.evidences = mergedEvidences;
-                            existing.has_evidence = !!updated.has_evidence;
-                            existing.valid_evidence_count = Number(updated.valid_evidence_count || 0);
-                            existing.fulfillment_source = this.requirementFulfillmentSource(existing);
+                            const initData = await initResponse.json().catch(() => ({}));
+                            if (!initResponse.ok || !initData.ok) throw new Error(initData.message || 'No se pudo iniciar la carga.');
+                            item.session = initData.session;
+                            chunkSize = Number(initData.chunk_size || this.uploadDefaultChunkSize);
                         }
-
-                        form.reset();
-                        this.setUploadMessage('success', data.message || 'Evidencias cargadas en Drive.');
+                        item.status = 'uploading';
+                        const driveFile = await this.uploadFileDirectToDrive(item, Number(chunkSize || this.uploadDefaultChunkSize));
+                        item.drive_file_id = driveFile.id || null;
+                        if (!item.completed_by_verify) {
+                            await this.completeUploadQueueItem(item, driveFile);
+                        }
                     } catch (error) {
-                        if (error.name === 'AbortError') {
-                            this.setUploadMessage('error', 'La carga tardó demasiado. Intenta nuevamente.');
-                        } else {
-                            this.setUploadMessage('error', error.message || 'No se pudo completar la carga, intenta de nuevo.');
+                        if (item.status !== 'cancelled') {
+                            const recovered = await this.verifyUploadQueueItem(item, true);
+                            if (!recovered) {
+                                item.status = 'failed';
+                                item.error = error.message || 'La carga falló.';
+                                await this.reportUploadFailure(item, item.error);
+                            }
                         }
                     } finally {
-                        clearTimeout(timeout);
-                        this.uploadBusy = false;
+                        this.uploadActiveCount = Math.max(0, this.uploadActiveCount - 1);
+                        this.processUploadQueue();
+                    }
+                },
+                sleep(ms) {
+                    return new Promise(resolve => setTimeout(resolve, ms));
+                },
+                driveRangeOffset(response) {
+                    const range = response.headers.get('Range') || response.headers.get('range') || '';
+                    const match = range.match(/bytes=0-(\d+)/i);
+                    return match ? Number(match[1]) + 1 : null;
+                },
+                async queryDriveUploadOffset(item) {
+                    if (!item?.session?.upload_url) return null;
+                    try {
+                        const response = await fetch(item.session.upload_url, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Range': `bytes */${item.file.size}`,
+                            },
+                            signal: item.abortController?.signal,
+                        });
+                        if (response.status === 308) {
+                            return this.driveRangeOffset(response) ?? 0;
+                        }
+                        if (response.ok) {
+                            const payload = await response.json().catch(() => ({}));
+                            if (payload && payload.id) {
+                                item.drive_file_id = payload.id;
+                                return item.file.size;
+                            }
+                        }
+                    } catch (_) {}
+                    return null;
+                },
+                async uploadChunkWithRetry(item, offset, end, chunk, maxRetries = 5) {
+                    let lastError = null;
+                    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                        if (item.status === 'cancelled') throw new Error('Carga cancelada.');
+                        try {
+                            const response = await fetch(item.session.upload_url, {
+                                method: 'PUT',
+                                headers: {
+                                    'Content-Type': item.mime_type || 'application/octet-stream',
+                                    'Content-Range': `bytes ${offset}-${end}/${item.file.size}`,
+                                },
+                                body: chunk,
+                                signal: item.abortController?.signal,
+                            });
+
+                            if (response.status === 308) {
+                                const confirmedOffset = this.driveRangeOffset(response);
+                                return { done: false, nextOffset: confirmedOffset ?? (end + 1), payload: null };
+                            }
+                            if (response.ok) {
+                                const payload = await response.json().catch(() => ({}));
+                                return { done: true, nextOffset: item.file.size, payload };
+                            }
+
+                            const txt = await response.text().catch(() => '');
+                            lastError = new Error(txt || `Drive rechazó el bloque (${response.status}).`);
+                        } catch (error) {
+                            if (error.name === 'AbortError' && item.status === 'cancelled') {
+                                throw error;
+                            }
+                            lastError = error;
+                        }
+
+                        const confirmedOffset = await this.queryDriveUploadOffset(item);
+                        if (confirmedOffset !== null && confirmedOffset > offset) {
+                            return { done: confirmedOffset >= item.file.size, nextOffset: confirmedOffset, payload: item.drive_file_id ? { id: item.drive_file_id } : null };
+                        }
+
+                        const isFinalChunk = end + 1 >= item.file.size;
+                        if (isFinalChunk && item.session?.verify_url) {
+                            item.error = 'Verificando si Drive recibió el archivo...';
+                            const recovered = await this.verifyUploadQueueItem(item, true);
+                            if (recovered) {
+                                return { done: true, nextOffset: item.file.size, payload: item.drive_file_id ? { id: item.drive_file_id } : null };
+                            }
+                        }
+
+                        item.error = `Reintentando bloque (${attempt}/${maxRetries})...`;
+                        await this.sleep(Math.min(12000, 1000 * attempt * attempt));
+                    }
+
+                    throw lastError || new Error('No se pudo cargar el bloque tras varios intentos.');
+                },
+                async uploadFileDirectToDrive(item, chunkSize) {
+                    let offset = await this.queryDriveUploadOffset(item);
+                    if (offset === null) offset = Number(item.uploaded_bytes || 0);
+                    let finalPayload = item.drive_file_id ? { id: item.drive_file_id } : null;
+                    while (offset < item.file.size) {
+                        if (item.status === 'cancelled') throw new Error('Carga cancelada.');
+                        const end = Math.min(offset + chunkSize, item.file.size) - 1;
+                        const chunk = item.file.slice(offset, end + 1);
+                        const result = await this.uploadChunkWithRetry(item, offset, end, chunk);
+
+                        offset = Math.max(offset, Number(result.nextOffset || 0));
+                        if (result.done) {
+                            finalPayload = result.payload || finalPayload;
+                            offset = item.file.size;
+                        }
+
+                        item.error = '';
+                        item.uploaded_bytes = offset;
+                        item.progress = item.file.size > 0 ? Math.min(100, Math.round((offset / item.file.size) * 100)) : 0;
+                        await this.reportUploadProgress(item);
+                    }
+                    if (!finalPayload || !finalPayload.id) {
+                        throw new Error('Drive no devolvió el ID del archivo cargado.');
+                    }
+                    return finalPayload;
+                },
+                async reportUploadProgress(item) {
+                    if (!item.session?.progress_url) return;
+                    try {
+                        await fetch(item.session.progress_url, {
+                            method: 'PATCH',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': this.csrfToken,
+                                'X-Requested-With': 'XMLHttpRequest',
+                            },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ uploaded_bytes: item.uploaded_bytes || 0 }),
+                        });
+                    } catch (_) {}
+                },
+                async completeUploadQueueItem(item, driveFile) {
+                    const response = await fetch(item.session.complete_url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                            'X-CSRF-TOKEN': this.csrfToken,
+                            'X-Requested-With': 'XMLHttpRequest',
+                        },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ drive_file_id: driveFile.id }),
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok || !data.ok) throw new Error(data.message || 'No se pudo registrar la evidencia.');
+                    item.status = 'completed';
+                    item.progress = 100;
+                    item.uploaded_bytes = item.size;
+                    if (data.requirement && this.requirements[data.requirement.id]) {
+                        const existing = this.requirements[data.requirement.id];
+                        existing.evidences = data.requirement.evidences || [];
+                        existing.history = data.requirement.history || existing.history || [];
+                        existing.has_evidence = !!data.requirement.has_evidence;
+                        existing.valid_evidence_count = Number(data.requirement.valid_evidence_count || 0);
+                        existing.fulfillment_source = this.requirementFulfillmentSource(existing);
+                    }
+                    this.setUploadMessage('success', `${item.name} quedó cargado en Drive.`);
+                },
+                async verifyUploadQueueItem(item, quiet = false) {
+                    if (!item?.session?.verify_url) return false;
+                    const previousStatus = item.status;
+                    item.status = 'initializing';
+                    item.error = quiet ? 'Verificando en Drive...' : '';
+                    const attempts = quiet ? 3 : 1;
+
+                    for (let attempt = 1; attempt <= attempts; attempt++) {
+                        try {
+                            const response = await fetch(item.session.verify_url, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json',
+                                    'X-CSRF-TOKEN': this.csrfToken,
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                },
+                                credentials: 'same-origin',
+                                body: JSON.stringify({ drive_file_id: item.drive_file_id || null }),
+                            });
+                            const data = await response.json().catch(() => ({}));
+                            if (!response.ok || !data.ok) throw new Error(data.message || 'No se pudo verificar la carga.');
+
+                            item.completed_by_verify = true;
+                            item.drive_file_id = data.session?.drive_file_id || item.drive_file_id || null;
+                            item.status = 'completed';
+                            item.progress = 100;
+                            item.uploaded_bytes = item.size;
+                            item.error = '';
+                            if (data.requirement && this.requirements[data.requirement.id]) {
+                                const existing = this.requirements[data.requirement.id];
+                                existing.evidences = data.requirement.evidences || [];
+                                existing.history = data.requirement.history || existing.history || [];
+                                existing.has_evidence = !!data.requirement.has_evidence;
+                                existing.valid_evidence_count = Number(data.requirement.valid_evidence_count || 0);
+                                existing.fulfillment_source = this.requirementFulfillmentSource(existing);
+                            }
+                            this.setUploadMessage('success', data.message || 'Carga verificada y vinculada.');
+                            return true;
+                        } catch (error) {
+                            if (attempt < attempts) {
+                                await this.sleep(1500 * attempt);
+                                continue;
+                            }
+                            if (quiet) {
+                                item.status = previousStatus;
+                                item.error = '';
+                                return false;
+                            }
+                            item.status = 'failed';
+                            item.error = error.message || 'No se pudo verificar la carga.';
+                            return false;
+                        }
+                    }
+
+                    return false;
+                },
+                async reportUploadFailure(item, message) {
+                    if (!item.session?.fail_url) return;
+                    try {
+                        await fetch(item.session.fail_url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': this.csrfToken,
+                                'X-Requested-With': 'XMLHttpRequest',
+                            },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ message, drive_file_id: item.drive_file_id || null }),
+                        });
+                    } catch (_) {}
+                },
+                async cancelUploadQueueItem(item) {
+                    if (!item || ['completed', 'failed', 'cancelled'].includes(item.status)) return;
+                    item.status = 'cancelled';
+                    item.error = 'Cancelado por el usuario.';
+                    if (item.abortController) item.abortController.abort();
+                    if (item.session?.cancel_url) {
+                        try {
+                            await fetch(item.session.cancel_url, {
+                                method: 'POST',
+                                headers: {
+                                    'Accept': 'application/json',
+                                    'X-CSRF-TOKEN': this.csrfToken,
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                },
+                                credentials: 'same-origin',
+                            });
+                        } catch (_) {}
+                    }
+                },
+                retryUploadQueueItem(item) {
+                    if (!item || item.status !== 'failed') return;
+                    item.status = 'pending';
+                    item.completed_by_verify = false;
+                    item.progress = 0;
+                    item.uploaded_bytes = 0;
+                    item.error = '';
+                    this.processUploadQueue();
+                },
+                async verifyRecentUploadSession(url) {
+                    if (!url) return;
+                    this.setUploadMessage('', '');
+                    try {
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': this.csrfToken,
+                                'X-Requested-With': 'XMLHttpRequest',
+                            },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ drive_file_id: null }),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok || !data.ok) throw new Error(data.message || 'No se pudo verificar la carga.');
+                        this.setUploadMessage('success', data.message || 'Carga verificada y vinculada.');
+                        setTimeout(() => window.location.reload(), 900);
+                    } catch (error) {
+                        this.setUploadMessage('error', error.message || 'No se pudo verificar la carga.');
                     }
                 },
                 goNextMissing() {
@@ -1116,6 +1480,38 @@
             @if ($errors->any())
                 <div class="rounded-md bg-rose-50 p-4 text-rose-700 text-sm">
                     {{ $errors->first() }}
+                </div>
+            @endif
+
+            @if (($recentDriveUploadSessions ?? collect())->isNotEmpty())
+                <div class="rounded-xl border border-gray-200 bg-white p-3 text-xs text-gray-700">
+                    <div class="mb-2 font-semibold text-gray-800">Cargas recientes</div>
+                    <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        @foreach ($recentDriveUploadSessions as $session)
+                            @php
+                                $status = (string) $session->status;
+                                $tone = match ($status) {
+                                    'completed' => 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                                    'failed' => 'border-rose-200 bg-rose-50 text-rose-800',
+                                    'cancelled' => 'border-gray-200 bg-gray-50 text-gray-600',
+                                    default => 'border-blue-200 bg-blue-50 text-blue-800',
+                                };
+                                $percent = $session->size_bytes > 0 ? min(100, (int) round(($session->uploaded_bytes / $session->size_bytes) * 100)) : 0;
+                            @endphp
+                            <div class="rounded-md border p-2 {{ $tone }}">
+                                <div class="truncate font-semibold">{{ $session->target_name }}</div>
+                                <div class="mt-1 uppercase tracking-wide">{{ $status }} · {{ $percent }}%</div>
+                                @if (in_array($status, ['failed', 'uploading'], true))
+                                    <button
+                                        type="button"
+                                        @click="verifyRecentUploadSession('{{ route('drive-upload-sessions.verify', $session) }}')"
+                                        class="mt-2 rounded border border-emerald-300 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50">
+                                        Verificar
+                                    </button>
+                                @endif
+                            </div>
+                        @endforeach
+                    </div>
                 </div>
             @endif
 
@@ -1359,29 +1755,28 @@
                                                     </div>
                                                 </template>
                                                 <template x-if="!currentRequirement().is_composite_parent">
-                                                    <form method="POST"
-                                                        enctype="multipart/form-data"
-                                                        action="{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}"
-                                                        x-bind:action="currentRequirement() ? currentRequirement().upload_url : '{{ $firstRequirementId ? route('projects.manage.upload', [$project, $firstRequirementId]) : '#' }}'"
-                                                        @submit.prevent="uploadCurrentRequirement($event)"
-                                                        class="space-y-3 rounded-lg border-2 border-emerald-200 bg-emerald-50/70 p-3">
-                                                        @csrf
-                                                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                                                            <div class="sm:col-span-2">
-                                                                <input type="file" name="archivos[]" multiple class="block w-full rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
-                                                            </div>
-                                                            <div>
-                                                            <button
-                                                                type="submit"
-                                                                class="w-full h-10 rounded-md text-sm font-semibold shadow-sm border border-gray-400 text-gray-900 ring-1 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                                                                :class="uploadButtonClass()"
-                                                                :disabled="uploadBusy"
-                                                                >
-                                                                <span x-text="uploadBusy ? 'Subiendo...' : 'Subir evidencia'"></span>
-                                                            </button>
+                                                    <div class="space-y-3 rounded-lg border-2 border-emerald-200 bg-emerald-50/70 p-3">
+                                                        <div class="space-y-2">
+                                                            <label class="text-xs font-semibold text-emerald-800">Archivo de evidencia</label>
+                                                            <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                                                <input type="file" @change="enqueueCurrentRequirement($event)" class="block min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
+                                                                <button
+                                                                    type="button"
+                                                                    @click="processUploadQueue()"
+                                                                    :disabled="uploadActiveCount > 0 || !hasPendingUpload()"
+                                                                    class="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400">
+                                                                    Cargar
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    x-show="uploadQueue.length > 0"
+                                                                    @click="uploadModalOpen = true"
+                                                                    class="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50">
+                                                                    Ver estado
+                                                                </button>
                                                             </div>
                                                         </div>
-                                                    </form>
+                                                    </div>
                                                 </template>
 
                                                 <div>
@@ -1392,16 +1787,6 @@
                                                     <span class="inline-flex items-center h-7 rounded-full px-2.5 text-xs font-medium ml-2" :class="fulfillmentClass(currentRequirement())" :style="fulfillmentStyle(currentRequirement())" x-text="fulfillmentLabel(currentRequirement())"></span>
                                                 </div>
 
-                                                <div class="flex items-center gap-2">
-                                                    <template x-if="!currentRequirement().is_composite_parent">
-                                                        <button type="button" @click="openDrivePicker()" class="h-8 px-3 rounded-md border border-violet-200 bg-violet-50 text-violet-700 text-xs font-medium hover:bg-violet-100">
-                                                            Vincular archivo de Drive
-                                                        </button>
-                                                    </template>
-                                                    <button type="button" @click="openBulkLinker()" class="h-8 px-3 rounded-md border border-sky-200 bg-sky-50 text-sky-700 text-xs font-medium hover:bg-sky-100">
-                                                        Vinculación masiva
-                                                    </button>
-                                                </div>
 
                                                 <div class="space-y-2">
                                                     <template x-if="!currentEvidence(currentRequirement())">
@@ -1586,7 +1971,76 @@
                 </div>
             </div>
 
-            <div x-show="deleteConfirmOpen" x-cloak @click.self="closeDeleteConfirm()" x-on:keydown.escape.window="closeDeleteConfirm()" class="gp-modal-overlay">
+    
+        <div x-show="uploadModalOpen" x-cloak class="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+            <div class="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10" @click.outside="closeUploadModal()">
+                <div class="border-b border-slate-100 bg-white px-5 py-4">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">Carga a Drive</span>
+                                <h3 class="text-base font-semibold text-slate-950" x-text="uploadModalTitle()"></h3>
+                            </div>
+                            <p class="mt-2 max-w-xl text-xs leading-5 text-slate-500">
+                                Mantén esta pestaña abierta hasta finalizar. Puedes seguir revisando esta pantalla; para ir a otro módulo, abre otra pestaña.
+                            </p>
+                        </div>
+                        <button type="button" @click="closeUploadModal()" class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-lg leading-none text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">×</button>
+                    </div>
+                </div>
+
+                <div class="space-y-3 px-5 py-4">
+                    <template x-if="uploadQueue.length === 0">
+                        <div class="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center text-sm text-slate-600">
+                            Aún no hay archivo seleccionado.
+                        </div>
+                    </template>
+
+                    <template x-for="item in uploadQueue" :key="item.local_id">
+                        <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold" :style="queueStatusStyle(item)" x-text="queueStatusLabel(item)"></span>
+                                        <span class="text-xs font-medium text-slate-500" x-text="`${formatBytes(item.uploaded_bytes)} / ${formatBytes(item.size)}`"></span>
+                                    </div>
+                                    <div class="mt-2 truncate text-sm font-semibold text-slate-950" x-text="item.name"></div>
+                                    <div class="mt-2 rounded-lg bg-white px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200/70">
+                                        <span class="font-semibold text-slate-700">Requisito destino:</span>
+                                        <span x-text="item.requirement_title || '-'"></span>
+                                    </div>
+                                    <div x-show="item.error" class="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700" x-text="item.error"></div>
+                                </div>
+                                <div class="flex shrink-0 flex-wrap items-center gap-2">
+                                    <button type="button" x-show="item.status === 'failed' && item.session && item.session.verify_url" @click="verifyUploadQueueItem(item)" class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100">Verificar</button>
+                                    <button type="button" x-show="item.status === 'failed'" @click="retryUploadQueueItem(item)" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">Reintentar</button>
+                                    <button type="button" x-show="['pending','initializing','uploading'].includes(item.status)" @click="cancelUploadQueueItem(item)" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100">Cancelar</button>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <div class="mb-1 flex items-center justify-between text-[11px] font-medium text-slate-500">
+                                    <span>Progreso</span>
+                                    <span x-text="`${uploadProgressPercent(item)}%`"></span>
+                                </div>
+                                <div class="h-3 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/70">
+                                    <div class="h-full rounded-full transition-all duration-300" :style="uploadProgressStyle(item)"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="flex flex-col gap-3 border-t border-slate-100 bg-white px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div class="text-xs text-slate-500">La notificación final llegará a la campanita del panel.</div>
+                    <div class="flex items-center justify-end gap-2">
+                        <button type="button" x-show="hasPendingUpload()" @click="processUploadQueue()" :disabled="uploadActiveCount > 0" class="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400">Cargar</button>
+                        <button type="button" @click="closeUploadModal()" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">Ocultar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div x-show="deleteConfirmOpen" x-cloak @click.self="closeDeleteConfirm()" x-on:keydown.escape.window="closeDeleteConfirm()" class="gp-modal-overlay">
                 <div class="gp-modal-card">
                     <div class="gp-modal-head px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                         <div class="text-sm font-semibold text-gray-800">Borrar archivo de Drive</div>
