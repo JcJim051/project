@@ -398,6 +398,188 @@
             max-height: 38vh;
             overflow-y: auto;
         }
+        .upload-modal-card {
+            width: min(42rem, calc(100vw - 1.5rem));
+        }
+        .upload-modal-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 1rem 1.125rem;
+            border-bottom: 1px solid #eef2f7;
+            background: #ffffff;
+        }
+        .upload-modal-title-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: .5rem;
+        }
+        .upload-modal-kicker {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid #bbf7d0;
+            border-radius: 999px;
+            background: #f0fdf4;
+            color: #166534;
+            font-size: .68rem;
+            font-weight: 700;
+            letter-spacing: .04em;
+            padding: .25rem .55rem;
+            text-transform: uppercase;
+        }
+        .upload-modal-title {
+            color: #111827;
+            font-size: .95rem;
+            font-weight: 700;
+            line-height: 1.25rem;
+        }
+        .upload-modal-help {
+            margin-top: .45rem;
+            max-width: 36rem;
+            color: #6b7280;
+            font-size: .75rem;
+            line-height: 1.15rem;
+        }
+        .upload-modal-close {
+            width: 2rem;
+            height: 2rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 999px;
+            background: #fff;
+            color: #6b7280;
+            font-size: 1.1rem;
+            line-height: 1;
+        }
+        .upload-modal-close:hover {
+            background: #f9fafb;
+            color: #111827;
+        }
+        .upload-modal-body {
+            padding: .85rem 1.125rem;
+            display: grid;
+            gap: .75rem;
+        }
+        .upload-card {
+            border: 1px solid #e5e7eb;
+            border-radius: .7rem;
+            background: #f9fafb;
+            padding: .85rem;
+        }
+        .upload-card-top {
+            display: flex;
+            justify-content: space-between;
+            gap: .75rem;
+            align-items: flex-start;
+        }
+        .upload-status-line {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: .45rem;
+        }
+        .upload-status-badge {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid;
+            border-radius: 999px;
+            padding: .25rem .6rem;
+            font-size: .72rem;
+            font-weight: 700;
+        }
+        .upload-size-text {
+            color: #6b7280;
+            font-size: .76rem;
+            font-weight: 600;
+        }
+        .upload-file-name {
+            margin-top: .55rem;
+            color: #111827;
+            font-size: .86rem;
+            font-weight: 700;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .upload-target {
+            margin-top: .45rem;
+            border: 1px solid #e5e7eb;
+            border-radius: .5rem;
+            background: #fff;
+            color: #4b5563;
+            font-size: .75rem;
+            line-height: 1.05rem;
+            padding: .45rem .6rem;
+        }
+        .upload-error {
+            margin-top: .45rem;
+            border: 1px solid #fecdd3;
+            border-radius: .5rem;
+            background: #fff1f2;
+            color: #be123c;
+            font-size: .75rem;
+            font-weight: 600;
+            padding: .45rem .6rem;
+        }
+        .upload-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: .4rem;
+        }
+        .upload-btn {
+            border: 1px solid #d1d5db;
+            border-radius: .5rem;
+            background: #fff;
+            color: #374151;
+            font-size: .75rem;
+            font-weight: 700;
+            padding: .45rem .65rem;
+        }
+        .upload-btn-danger {
+            border-color: #fecdd3;
+            background: #fff1f2;
+            color: #be123c;
+        }
+        .upload-btn-success {
+            border-color: #bbf7d0;
+            background: #f0fdf4;
+            color: #166534;
+        }
+        .upload-progress-meta {
+            display: flex;
+            justify-content: space-between;
+            margin-top: .75rem;
+            margin-bottom: .25rem;
+            color: #6b7280;
+            font-size: .7rem;
+            font-weight: 700;
+        }
+        .upload-progress-track {
+            height: .55rem;
+            overflow: hidden;
+            border: 1px solid #d1fae5;
+            border-radius: 999px;
+            background: #ecfdf5;
+        }
+        .upload-progress-bar {
+            height: 100%;
+            border-radius: 999px;
+            transition: width .25s ease;
+        }
+        .upload-modal-foot-note {
+            color: #6b7280;
+            font-size: .73rem;
+        }
+        @media (max-width: 640px) {
+            .upload-card-top {
+                flex-direction: column;
+            }
+            .upload-actions {
+                justify-content: flex-start;
+            }
+        }
         @media (max-height: 760px) {
             .gp-modal-card,
             .gp-modal-card-lg {
@@ -1972,69 +2154,61 @@
             </div>
 
     
-        <div x-show="uploadModalOpen" x-cloak class="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
-            <div class="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10" @click.outside="closeUploadModal()">
-                <div class="border-b border-slate-100 bg-white px-5 py-4">
-                    <div class="flex items-start justify-between gap-4">
-                        <div class="min-w-0">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">Carga a Drive</span>
-                                <h3 class="text-base font-semibold text-slate-950" x-text="uploadModalTitle()"></h3>
-                            </div>
-                            <p class="mt-2 max-w-xl text-xs leading-5 text-slate-500">
-                                Mantén esta pestaña abierta hasta finalizar. Puedes seguir revisando esta pantalla; para ir a otro módulo, abre otra pestaña.
-                            </p>
+        <div x-show="uploadModalOpen" x-cloak @click.self="closeUploadModal()" x-on:keydown.escape.window="closeUploadModal()" class="gp-modal-overlay">
+            <div class="gp-modal-card upload-modal-card">
+                <div class="upload-modal-head">
+                    <div>
+                        <div class="upload-modal-title-row">
+                            <span class="upload-modal-kicker">Carga a Drive</span>
+                            <div class="upload-modal-title" x-text="uploadModalTitle()"></div>
                         </div>
-                        <button type="button" @click="closeUploadModal()" class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-lg leading-none text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">×</button>
+                        <p class="upload-modal-help">Mantén esta pestaña abierta hasta finalizar. Puedes seguir revisando esta pantalla; para ir a otro módulo, abre otra pestaña.</p>
                     </div>
+                    <button type="button" @click="closeUploadModal()" class="upload-modal-close">×</button>
                 </div>
 
-                <div class="space-y-3 px-5 py-4">
+                <div class="gp-modal-body upload-modal-body">
                     <template x-if="uploadQueue.length === 0">
-                        <div class="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center text-sm text-slate-600">
-                            Aún no hay archivo seleccionado.
-                        </div>
+                        <div class="upload-card" style="text-align:center;color:#6b7280;font-size:.82rem;">Aún no hay archivo seleccionado.</div>
                     </template>
 
                     <template x-for="item in uploadQueue" :key="item.local_id">
-                        <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div class="min-w-0 flex-1">
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold" :style="queueStatusStyle(item)" x-text="queueStatusLabel(item)"></span>
-                                        <span class="text-xs font-medium text-slate-500" x-text="`${formatBytes(item.uploaded_bytes)} / ${formatBytes(item.size)}`"></span>
+                        <div class="upload-card">
+                            <div class="upload-card-top">
+                                <div style="min-width:0;flex:1;">
+                                    <div class="upload-status-line">
+                                        <span class="upload-status-badge" :style="queueStatusStyle(item)" x-text="queueStatusLabel(item)"></span>
+                                        <span class="upload-size-text" x-text="`${formatBytes(item.uploaded_bytes)} / ${formatBytes(item.size)}`"></span>
                                     </div>
-                                    <div class="mt-2 truncate text-sm font-semibold text-slate-950" x-text="item.name"></div>
-                                    <div class="mt-2 rounded-lg bg-white px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200/70">
-                                        <span class="font-semibold text-slate-700">Requisito destino:</span>
+                                    <div class="upload-file-name" x-text="item.name"></div>
+                                    <div class="upload-target">
+                                        <strong style="color:#374151;">Requisito destino:</strong>
                                         <span x-text="item.requirement_title || '-'"></span>
                                     </div>
-                                    <div x-show="item.error" class="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700" x-text="item.error"></div>
+                                    <div x-show="item.error" class="upload-error" x-text="item.error"></div>
                                 </div>
-                                <div class="flex shrink-0 flex-wrap items-center gap-2">
-                                    <button type="button" x-show="item.status === 'failed' && item.session && item.session.verify_url" @click="verifyUploadQueueItem(item)" class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100">Verificar</button>
-                                    <button type="button" x-show="item.status === 'failed'" @click="retryUploadQueueItem(item)" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">Reintentar</button>
-                                    <button type="button" x-show="['pending','initializing','uploading'].includes(item.status)" @click="cancelUploadQueueItem(item)" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100">Cancelar</button>
+                                <div class="upload-actions">
+                                    <button type="button" x-show="item.status === 'failed' && item.session && item.session.verify_url" @click="verifyUploadQueueItem(item)" class="upload-btn upload-btn-success">Verificar</button>
+                                    <button type="button" x-show="item.status === 'failed'" @click="retryUploadQueueItem(item)" class="upload-btn">Reintentar</button>
+                                    <button type="button" x-show="['pending','initializing','uploading'].includes(item.status)" @click="cancelUploadQueueItem(item)" class="upload-btn upload-btn-danger">Cancelar</button>
                                 </div>
                             </div>
-                            <div class="mt-3">
-                                <div class="mb-1 flex items-center justify-between text-[11px] font-medium text-slate-500">
-                                    <span>Progreso</span>
-                                    <span x-text="`${uploadProgressPercent(item)}%`"></span>
-                                </div>
-                                <div class="h-3 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/70">
-                                    <div class="h-full rounded-full transition-all duration-300" :style="uploadProgressStyle(item)"></div>
-                                </div>
+                            <div class="upload-progress-meta">
+                                <span>Progreso</span>
+                                <span x-text="`${uploadProgressPercent(item)}%`"></span>
+                            </div>
+                            <div class="upload-progress-track">
+                                <div class="upload-progress-bar" :style="uploadProgressStyle(item)"></div>
                             </div>
                         </div>
                     </template>
                 </div>
 
-                <div class="flex flex-col gap-3 border-t border-slate-100 bg-white px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div class="text-xs text-slate-500">La notificación final llegará a la campanita del panel.</div>
-                    <div class="flex items-center justify-end gap-2">
-                        <button type="button" x-show="hasPendingUpload()" @click="processUploadQueue()" :disabled="uploadActiveCount > 0" class="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400">Cargar</button>
-                        <button type="button" @click="closeUploadModal()" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">Ocultar</button>
+                <div class="gp-modal-foot px-4 py-3 border-t border-gray-100 flex items-center justify-between gap-2">
+                    <div class="upload-modal-foot-note">La notificación final llegará a la campanita del panel.</div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" x-show="hasPendingUpload()" @click="processUploadQueue()" :disabled="uploadActiveCount > 0" class="upload-btn upload-btn-success">Cargar</button>
+                        <button type="button" @click="closeUploadModal()" class="upload-btn">Ocultar</button>
                     </div>
                 </div>
             </div>
