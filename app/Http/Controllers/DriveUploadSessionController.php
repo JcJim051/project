@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\GamificationActivityTriggered;
 use App\Models\DriveUploadSession;
 use App\Models\Project;
 use App\Models\Requirement;
@@ -130,6 +131,7 @@ class DriveUploadSessionController extends Controller
         ]);
 
         $session->load(['project', 'requirement']);
+        $hadValidEvidenceBefore = $this->hasValidEvidence($session->project, $session->requirement);
         $evidence = $drive->createUploadedEvidenceFromDriveFile(
             $session->project,
             $session->requirement,
@@ -146,6 +148,7 @@ class DriveUploadSessionController extends Controller
             'error_message' => null,
         ])->save();
 
+        $this->awardFirstValidEvidence($session, $hadValidEvidenceBefore);
         $this->notifyUpload($session->fresh(['project', 'requirement']), true);
 
         return response()->json([
@@ -219,6 +222,7 @@ class DriveUploadSessionController extends Controller
         }
 
         $session->load(['project', 'requirement']);
+        $hadValidEvidenceBefore = $this->hasValidEvidence($session->project, $session->requirement);
         $drive->createUploadedEvidenceFromDriveFile($session->project, $session->requirement, $driveFileId, (int) $session->user_id, 'Carga verificada manualmente');
         $session->forceFill([
             'status' => 'completed',
@@ -228,6 +232,7 @@ class DriveUploadSessionController extends Controller
             'error_message' => null,
         ])->save();
 
+        $this->awardFirstValidEvidence($session, $hadValidEvidenceBefore);
         $this->notifyUpload($session->fresh(['project', 'requirement']), true, 'Carga verificada y vinculada');
 
         return response()->json([
@@ -388,6 +393,35 @@ class DriveUploadSessionController extends Controller
                 'created_at' => optional($evidence->created_at)->format('Y-m-d H:i'),
             ])->all(),
         ];
+    }
+
+    private function hasValidEvidence(Project $project, Requirement $requirement): bool
+    {
+        return RequirementEvidence::query()
+            ->where('project_id', $project->id)
+            ->where('requirement_id', $requirement->id)
+            ->where('in_drive', true)
+            ->exists();
+    }
+
+    private function awardFirstValidEvidence(DriveUploadSession $session, bool $hadValidEvidenceBefore): void
+    {
+        if ($hadValidEvidenceBefore || !$session->user_id) {
+            return;
+        }
+
+        if (!$this->hasValidEvidence($session->project, $session->requirement)) {
+            return;
+        }
+
+        event(new GamificationActivityTriggered('req_first_valid_evidence', (int) $session->user_id, [
+            'project_id' => (int) $session->project_id,
+            'requirement_id' => (int) $session->requirement_id,
+            'metadata' => [
+                'drive_upload_session_id' => (int) $session->id,
+                'upload_mode' => 'resumable',
+            ],
+        ]));
     }
 
     private function sessionPayload(DriveUploadSession $session, bool $includeUploadUrl = false): array
