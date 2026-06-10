@@ -831,6 +831,11 @@
                     if (!req) return;
                     this.selectedSubgroupKey = req.folder_key;
                     this.selectedGroupCode = req.group_code;
+                    this.$nextTick(() => {
+                        if (this.$refs.requirementUploadInput) {
+                            this.$refs.requirementUploadInput.value = '';
+                        }
+                    });
                 },
                 currentRequirement() {
                     return this.requirementById(this.selectedRequirementId);
@@ -1139,6 +1144,43 @@
                     if (valid.some(e => String(e.source || '').toLowerCase() === 'upload')) return 'upload';
                     return 'none';
                 },
+                applyRequirementUpdate(payload) {
+                    if (!payload || !this.requirements[payload.id]) return;
+
+                    const existing = this.requirements[payload.id];
+                    existing.evidences = payload.evidences || [];
+                    existing.history = payload.history || existing.history || [];
+                    existing.has_evidence = !!payload.has_evidence;
+                    existing.valid_evidence_count = Number(payload.valid_evidence_count || 0);
+                    existing.fulfillment_source = this.requirementFulfillmentSource(existing);
+                    this.recalculateProgressCounters();
+                },
+                recalculateProgressCounters() {
+                    this.groups.forEach(group => {
+                        let groupDone = 0;
+                        let groupTotal = 0;
+
+                        (group.subgroups || []).forEach(subgroup => {
+                            const requirements = (subgroup.requirement_ids || [])
+                                .map(id => this.requirementById(id))
+                                .filter(Boolean);
+
+                            const total = requirements.length;
+                            const done = requirements.filter(req => !!req.has_evidence).length;
+
+                            subgroup.total = total;
+                            subgroup.done = done;
+                            subgroup.percent = total > 0 ? Math.round((done / total) * 100) : 0;
+
+                            groupTotal += total;
+                            groupDone += done;
+                        });
+
+                        group.total = groupTotal;
+                        group.done = groupDone;
+                        group.percent = groupTotal > 0 ? Math.round((groupDone / groupTotal) * 100) : 0;
+                    });
+                },
                 openCustomCertificationModal() {
                     this.customCertificationOpen = true;
                     this.customCertificationName = '';
@@ -1266,7 +1308,6 @@
                         error: '',
                         abortController: null,
                     });
-                    input.value = '';
                     this.setUploadMessage('success', 'Archivo listo. Presiona Cargar para iniciar.');
                 },
                 hasPendingUpload() {
@@ -1488,14 +1529,7 @@
                     item.status = 'completed';
                     item.progress = 100;
                     item.uploaded_bytes = item.size;
-                    if (data.requirement && this.requirements[data.requirement.id]) {
-                        const existing = this.requirements[data.requirement.id];
-                        existing.evidences = data.requirement.evidences || [];
-                        existing.history = data.requirement.history || existing.history || [];
-                        existing.has_evidence = !!data.requirement.has_evidence;
-                        existing.valid_evidence_count = Number(data.requirement.valid_evidence_count || 0);
-                        existing.fulfillment_source = this.requirementFulfillmentSource(existing);
-                    }
+                    this.applyRequirementUpdate(data.requirement);
                     this.setUploadMessage('success', `${item.name} quedó cargado en Drive.`);
                 },
                 async verifyUploadQueueItem(item, quiet = false) {
@@ -1527,14 +1561,7 @@
                             item.progress = 100;
                             item.uploaded_bytes = item.size;
                             item.error = '';
-                            if (data.requirement && this.requirements[data.requirement.id]) {
-                                const existing = this.requirements[data.requirement.id];
-                                existing.evidences = data.requirement.evidences || [];
-                                existing.history = data.requirement.history || existing.history || [];
-                                existing.has_evidence = !!data.requirement.has_evidence;
-                                existing.valid_evidence_count = Number(data.requirement.valid_evidence_count || 0);
-                                existing.fulfillment_source = this.requirementFulfillmentSource(existing);
-                            }
+                            this.applyRequirementUpdate(data.requirement);
                             this.setUploadMessage('success', data.message || 'Carga verificada y vinculada.');
                             return true;
                         } catch (error) {
@@ -1895,7 +1922,7 @@
                                                 class="w-full rounded-md border px-2 py-2 text-left transition cursor-pointer"
                                                 :class="selectedRequirementId === req.id ? activeClassFor(selectedGroupCode || &quot;01&quot;) : 'border-gray-200 bg-white hover:bg-gray-50'">
                                                     <div class="flex items-center justify-between gap-2">
-                                                        <a :href="req.edit_url" @click.stop target="_blank" rel="noopener" class="text-xs font-medium text-indigo-700 hover:text-indigo-800 hover:underline truncate" x-text="req.title"></a>
+                                                        <div class="text-sm font-semibold leading-snug text-slate-600 truncate" x-text="req.title"></div>
                                                         <template x-if="firstEvidenceLink(req)">
                                                             <a :href="firstEvidenceLink(req)" target="_blank" rel="noopener" class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">Ver</a>
                                                         </template>
@@ -1941,7 +1968,7 @@
                                                         <div class="space-y-2">
                                                             <label class="text-xs font-semibold text-emerald-800">Archivo de evidencia</label>
                                                             <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                                                <input type="file" @change="enqueueCurrentRequirement($event)" class="block min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
+                                                                <input type="file" x-ref="requirementUploadInput" @change="enqueueCurrentRequirement($event)" class="block min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
                                                                 <button
                                                                     type="button"
                                                                     @click="processUploadQueue()"
