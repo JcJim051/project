@@ -12,6 +12,7 @@ class FuenteFinanciacion extends Model
     protected $fillable = [
         'codigo',
         'nombre',
+        'tipo',
         'activo',
     ];
 
@@ -19,4 +20,3 @@ class FuenteFinanciacion extends Model
         'activo' => 'boolean',
     ];
 }
-

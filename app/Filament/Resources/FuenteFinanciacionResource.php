@@ -33,7 +33,7 @@ class FuenteFinanciacionResource extends Resource
     {
         return $form->schema([
             Section::make('Datos de la fuente')
-                ->columns(2)
+                ->columns(3)
                 ->schema([
                     TextInput::make('codigo')
                         ->label('Cod fuente')
@@ -43,6 +43,10 @@ class FuenteFinanciacionResource extends Resource
                         ->label('Fuente')
                         ->required()
                         ->maxLength(255),
+                    TextInput::make('tipo')
+                        ->label('Tipo')
+                        ->required()
+                        ->maxLength(150),
                     Toggle::make('activo')
                         ->label('Activo')
                         ->default(true),
@@ -56,6 +60,7 @@ class FuenteFinanciacionResource extends Resource
             ->columns([
                 TextColumn::make('codigo')->label('Cod fuente')->searchable()->sortable(),
                 TextColumn::make('nombre')->label('Fuente')->searchable()->wrap(),
+                TextColumn::make('tipo')->label('Tipo')->searchable()->wrap(),
                 IconColumn::make('activo')->label('Activo')->boolean(),
                 TextColumn::make('updated_at')->label('Actualizado')->dateTime('Y-m-d H:i')->sortable(),
             ])
@@ -93,4 +98,3 @@ class FuenteFinanciacionResource extends Resource
         return (bool) ($user && $user->canManageParametrizacion());
     }
 }
-
