@@ -14,6 +14,7 @@ use App\Http\Controllers\ProjectBankController;
 use App\Http\Controllers\AttachmentPackageRunController;
 use App\Http\Controllers\ProjectTransferRequestController;
 use App\Http\Controllers\ProjectTransferReviewController;
+use App\Http\Controllers\RequirementEvidencePreviewController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -81,6 +82,7 @@ Route::middleware([
     Route::get('/projects/{project}/attachments-pdf/runs/{run}', [AttachmentPackageRunController::class, 'show'])->name('projects.attachments.runs.show');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}/preview', [AttachmentPackageRunController::class, 'preview'])->name('projects.attachments.runs.preview');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}/download', [AttachmentPackageRunController::class, 'download'])->name('projects.attachments.runs.download');
+    Route::get('/requirement-evidences/{evidence}/preview', [RequirementEvidencePreviewController::class, 'show'])->name('requirement-evidences.preview');
     Route::post('/projects/{project}/mga-transfer/send', [ProjectTransferRequestController::class, 'send'])->name('projects.mga_transfer.send');
     Route::post('/projects/{project}/mga-transfer/{transferRequest}/approve', [ProjectTransferRequestController::class, 'approve'])->name('projects.mga_transfer.approve');
     Route::post('/projects/{project}/mga-transfer/{transferRequest}/reject', [ProjectTransferRequestController::class, 'reject'])->name('projects.mga_transfer.reject');

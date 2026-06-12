@@ -209,7 +209,7 @@
                                     <div class="rounded-md border border-gray-200 overflow-hidden bg-gray-50" style="height:74vh; min-height:560px;">
                                         <iframe x-show="previewUrl" :src="previewUrl" class="h-full w-full" loading="lazy"></iframe>
                                     </div>
-                                    <a x-show="viewUrl" :href="viewUrl" target="_blank" class="inline-flex h-8 items-center rounded-md border border-gray-300 px-2 text-xs text-gray-700 hover:bg-gray-50">Abrir en Drive</a>
+                                    <a x-show="viewUrl" :href="viewUrl" target="_blank" class="inline-flex h-8 items-center rounded-md border border-gray-300 px-2 text-xs text-gray-700 hover:bg-gray-50">Abrir archivo</a>
                                 </div>
                             </template>
                         </div>

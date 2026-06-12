@@ -122,8 +122,8 @@ class ReviewProjectTransferRequest extends Page
                             return [
                                 'id' => (int) $ev->id,
                                 'name' => (string) ($ev->drive_file_name ?: 'Archivo'),
-                                'preview_url' => $ev->drive_file_id ? 'https://drive.google.com/file/d/' . $ev->drive_file_id . '/preview' : null,
-                                'view_url' => $ev->drive_file_id ? 'https://drive.google.com/file/d/' . $ev->drive_file_id . '/view' : null,
+                                'preview_url' => route('requirement-evidences.preview', ['evidence' => $ev]),
+                                'view_url' => route('requirement-evidences.preview', ['evidence' => $ev]),
                             ];
                         })->values()->all();
 
