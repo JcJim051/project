@@ -13,6 +13,7 @@ use Filament\Actions;
 use Filament\Forms\Components\FileUpload;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Support\Enums\ActionSize;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -26,8 +27,9 @@ class ListProjects extends ListRecords
     {
         return [
             Actions\Action::make('plantillaCargaMasiva')
-                ->label('Descargar plantilla Excel')
+                ->label('Plantilla')
                 ->icon('heroicon-o-document-arrow-down')
+                ->size(ActionSize::Small)
                 ->visible(fn (): bool => (bool) auth()->user()?->canManageDirectorCatalogs())
                 ->action(function () {
                     $spreadsheet = new Spreadsheet();
@@ -218,8 +220,9 @@ class ListProjects extends ListRecords
                     return response()->download($tmpPath, 'plantilla_carga_masiva_proyectos.xlsx')->deleteFileAfterSend(true);
                 }),
             Actions\Action::make('cargaMasivaProyectos')
-                ->label('Cargar Excel de proyectos')
+                ->label('Cargar proyectos')
                 ->icon('heroicon-o-arrow-up-tray')
+                ->size(ActionSize::Small)
                 ->visible(fn (): bool => (bool) auth()->user()?->canManageDirectorCatalogs())
                 ->form([
                     FileUpload::make('archivo')
@@ -258,8 +261,9 @@ class ListProjects extends ListRecords
                     $notification->send();
                 }),
             Actions\Action::make('prevalidarSeguimiento')
-                ->label('Prevalidar Excel seguimiento')
+                ->label('Prevalidar')
                 ->icon('heroicon-o-beaker')
+                ->size(ActionSize::Small)
                 ->visible(fn (): bool => (bool) auth()->user()?->canManageDirectorCatalogs())
                 ->form([
                     FileUpload::make('archivo')
@@ -297,7 +301,9 @@ class ListProjects extends ListRecords
                     }
                     $notification->send();
                 }),
-            Actions\CreateAction::make(),
+            Actions\CreateAction::make()
+                ->label('Proyecto')
+                ->size(ActionSize::Small),
         ];
     }
 }

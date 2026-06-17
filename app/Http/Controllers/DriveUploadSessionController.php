@@ -378,7 +378,11 @@ class DriveUploadSessionController extends Controller
             'evidences' => $visible->map(fn ($evidence) => [
                 'id' => $evidence->id,
                 'name' => $evidence->drive_file_name,
+                'display_name' => $evidence->drive_file_name,
                 'file_id' => $evidence->drive_file_id,
+                'can_preview' => $evidence->canPreviewInPortal(),
+                'preview_url' => route('requirement-evidences.preview', ['evidence' => $evidence]),
+                'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                 'source' => $evidence->source,
                 'is_valid' => (bool) $evidence->in_drive,
                 'unlink_url' => route('projects.requirements.unlink_drive_file', [$project, $requirement, $evidence]),
@@ -387,7 +391,11 @@ class DriveUploadSessionController extends Controller
             'history' => $rows->map(fn ($evidence) => [
                 'id' => $evidence->id,
                 'name' => $evidence->drive_file_name,
+                'display_name' => $evidence->drive_file_name,
                 'file_id' => $evidence->drive_file_id,
+                'can_preview' => $evidence->canPreviewInPortal(),
+                'preview_url' => route('requirement-evidences.preview', ['evidence' => $evidence]),
+                'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                 'source' => $evidence->source,
                 'is_valid' => (bool) $evidence->in_drive,
                 'created_at' => optional($evidence->created_at)->format('Y-m-d H:i'),

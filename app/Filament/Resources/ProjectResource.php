@@ -215,6 +215,12 @@ class ProjectResource extends Resource
                             ->label('Población objetivo')
                             ->numeric()
                             ->minValue(0),
+                        Textarea::make('objeto_proyecto')
+                            ->label('Objeto del proyecto')
+                            ->required()
+                            ->maxLength(500)
+                            ->rows(4)
+                            ->columnSpanFull(),
                         Select::make('sector_principal_id')
                             ->label('Sector principal')
                             ->options(fn (): array => static::activeSectorOptions())
@@ -250,39 +256,6 @@ class ProjectResource extends Resource
                             ->native(false)
                             ->helperText('Opcional. Se mostrarán después del principal en Documentos Sectoriales.')
                             ->columnSpan(2),
-                    ]),
-                Section::make('Contenido y Drive')
-                    ->collapsible()
-                    ->collapsed()
-                    ->columns(2)
-                    ->schema([
-                        Textarea::make('objeto_proyecto')
-                            ->label('Objeto del proyecto')
-                            ->required()
-                            ->maxLength(500)
-                            ->rows(4)
-                            ->columnSpanFull(),
-                        Select::make('drive_setup_mode')
-                            ->label('Configuración carpeta Drive')
-                            ->options([
-                                'auto' => 'Automática (crear proyecto base en Drive)',
-                                'manual' => 'Manual (pegar ruta/ID existente)',
-                            ])
-                            ->default('auto')
-                            ->live()
-                            ->dehydrated(fn (string $operation): bool => $operation === 'create')
-                            ->visible(fn (string $operation): bool => $operation === 'create')
-                            ->columnSpanFull(),
-                        TextInput::make('ruta_drive')
-                            ->label('Ruta Drive')
-                            ->maxLength(500)
-                            ->required(fn (Get $get, string $operation): bool => $operation === 'create' && $get('drive_setup_mode') === 'manual')
-                            ->columnSpanFull()
-                            ->helperText('Modo manual: acepta URL de carpeta o solo ID. En modo automático la plataforma creará la estructura base.'),
-                        TextInput::make('drive_folder_id')
-                            ->label('ID carpeta Drive')
-                            ->disabled()
-                            ->dehydrated(false),
                     ]),
                 Section::make('Perfil Banco (Excel)')
                     ->description('Datos iniciales para generar F-PE-23, F-PE-24 y F-PE-25. Todos son opcionales.')
@@ -471,6 +444,33 @@ class ProjectResource extends Resource
                             ->label('Observaciones')
                             ->rows(2),
                     ]),
+                Section::make('Drive')
+                    ->collapsible()
+                    ->collapsed()
+                    ->columns(2)
+                    ->schema([
+                        Select::make('drive_setup_mode')
+                            ->label('Configuración carpeta Drive')
+                            ->options([
+                                'auto' => 'Automática (crear proyecto base en Drive)',
+                                'manual' => 'Manual (pegar ruta/ID existente)',
+                            ])
+                            ->default('auto')
+                            ->live()
+                            ->dehydrated(fn (string $operation): bool => $operation === 'create')
+                            ->visible(fn (string $operation): bool => $operation === 'create')
+                            ->columnSpanFull(),
+                        TextInput::make('ruta_drive')
+                            ->label('Ruta Drive')
+                            ->maxLength(500)
+                            ->required(fn (Get $get, string $operation): bool => $operation === 'create' && $get('drive_setup_mode') === 'manual')
+                            ->columnSpanFull()
+                            ->helperText('Modo manual: acepta URL de carpeta o solo ID. En modo automático la plataforma creará la estructura base.'),
+                        TextInput::make('drive_folder_id')
+                            ->label('ID carpeta Drive')
+                            ->disabled()
+                            ->dehydrated(false),
+                    ]),
             ]);
     }
 
@@ -482,22 +482,8 @@ class ProjectResource extends Resource
                     ->label('Nombre clave')
                     ->limit(26)
                     ->wrap()
-                    ->description(function (Project $record): ?string {
-                        $prioridad = $record->prioridadEntidad;
-                        if (!$prioridad) {
-                            return 'P. entidad: Sin definir';
-                        }
-
-                        $icon = match ((int) $prioridad->numero) {
-                            1 => '🔴',
-                            2 => '🟠',
-                            3 => '🟡',
-                            4 => '🟢',
-                            default => '⚪',
-                        };
-
-                        return "P. entidad: {$icon} {$prioridad->numero} {$prioridad->nombre}";
-                    })
+                    ->description(fn (Project $record): HtmlString|string => static::priorityEntitySummaryHtml($record))
+                    ->html()
                     ->searchable()
                     ->sortable(),
                 TextColumn::make('municipios_display')
@@ -569,6 +555,8 @@ class ProjectResource extends Resource
                     ->sortable(),
                 TextColumn::make('prioridadEntidad.nombre')
                     ->label('Prioridad entidad')
+                    ->html()
+                    ->formatStateUsing(fn ($state, Project $record): HtmlString|string => static::priorityEntityBadgeHtml($record))
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('stage.nombre')
                     ->label('Etapa')
@@ -756,6 +744,36 @@ class ProjectResource extends Resource
             ->orderBy('anio')
             ->pluck('anio', 'id')
             ->all();
+    }
+
+    public static function priorityEntityBadgeHtml(Project $record): HtmlString|string
+    {
+        $priority = $record->prioridadEntidad;
+
+        if (!$priority) {
+            return '-';
+        }
+
+        return new HtmlString(sprintf(
+            '<span style="%s">%s</span>',
+            $priority->badgeStyle(),
+            e($priority->badgeLabel())
+        ));
+    }
+
+    public static function priorityEntitySummaryHtml(Project $record): HtmlString|string
+    {
+        $priority = $record->prioridadEntidad;
+
+        if (!$priority) {
+            return 'P. entidad: Sin definir';
+        }
+
+        return new HtmlString(sprintf(
+            '<span style="%s">%s</span>',
+            $priority->badgeStyle(),
+            e($priority->summaryLabel())
+        ));
     }
 
     protected static function canManageProjectManualStatus(): bool

@@ -44,21 +44,7 @@
                     if (($item->drive_folder_name ?? null) !== ($req->carpeta ?? null)) {
                         return false;
                     }
-                    $name = strtolower($item->drive_file_name ?? '');
-                    $isPdf = $item->drive_mime_type === 'application/pdf' || str_ends_with($name, '.pdf');
-                    $isEditable = in_array($item->drive_mime_type, [
-                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                        'application/msword',
-                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                        'application/vnd.ms-excel',
-                        'application/vnd.ms-excel.sheet.macroenabled.12',
-                        'application/vnd.ms-excel.sheet.binary.macroenabled.12',
-                        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                        'application/vnd.ms-powerpoint',
-                        'application/vnd.ms-project',
-                        'application/x-msproject',
-                    ], true) || preg_match('/\.(docx?|xlsx?|xlsm|xlsb|csv|pptx?|mpp)$/', $name);
-                    return $isPdf || $isEditable;
+                    return (bool) ($item->in_drive ?? false);
                 })->values();
 
                 $calcNumeracion = $renumerated[$req->id] ?? $req->codigo_interno ?? $req->numeracion;
@@ -88,7 +74,11 @@
                     'evidences' => $visibleEvidences->map(function ($evidence) {
                         return [
                             'name' => $evidence->drive_file_name,
+                            'display_name' => $evidence->drive_file_name,
                             'file_id' => $evidence->drive_file_id,
+                            'can_preview' => $evidence->canPreviewInPortal(),
+                            'preview_url' => route('requirement-evidences.preview', ['evidence' => $evidence]),
+                            'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                             'is_valid' => (bool) $evidence->in_drive,
                         ];
                     })->all(),
@@ -469,8 +459,13 @@
                 },
                 firstEvidenceLink(req) {
                     if (!req || !Array.isArray(req.evidences)) return null;
-                    const found = req.evidences.find(e => !!e.file_id);
-                    return found ? `https://drive.google.com/file/d/${found.file_id}/view` : null;
+                    const found = req.evidences.find(e => !!e.preview_url);
+                    return found ? found.preview_url : null;
+                },
+                firstEvidenceDownloadLink(req) {
+                    if (!req || !Array.isArray(req.evidences)) return null;
+                    const found = req.evidences.find(e => !!e.download_url);
+                    return found ? found.download_url : null;
                 },
                 goNextMissing() {
                     const list = this.requirementsInSelectedSubgroup();
@@ -786,7 +781,10 @@
                                                     <div class="flex items-center justify-between gap-2">
                                                         <div class="text-xs font-medium text-gray-700 truncate" x-text="req.title"></div>
                                                         <template x-if="req.has_evidence && firstEvidenceLink(req)">
-                                                            <a :href="firstEvidenceLink(req)" target="_blank" rel="noopener" class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">Ver</a>
+                                                            <div class="flex items-center gap-2 shrink-0">
+                                                                <a :href="firstEvidenceLink(req)" target="_blank" rel="noopener" class="text-[8px] font-medium leading-none text-indigo-600 hover:text-indigo-700">Ver</a>
+                                                                <a x-show="firstEvidenceDownloadLink(req)" :href="firstEvidenceDownloadLink(req)" class="text-[8px] font-medium leading-none text-emerald-700 hover:text-emerald-800">Descargar</a>
+                                                            </div>
                                                         </template>
                                                         <template x-if="!(req.has_evidence && firstEvidenceLink(req))">
                                                             <span class="text-[11px] text-gray-500">Pendiente</span>
@@ -831,15 +829,23 @@
                                                         <div class="rounded-md border border-gray-200 p-2 text-xs">
                                                             <div class="flex items-start justify-between gap-2">
                                                                 <div class="font-medium text-gray-700 truncate" x-text="evidence.name"></div>
-                                                            <a
-                                                                x-show="evidence.file_id"
-                                                                :href="`https://drive.google.com/file/d/${evidence.file_id}/view`"
-                                                                target="_blank"
-                                                                rel="noopener"
-                                                                class="text-indigo-600 hover:text-indigo-700">
-                                                                Ver
-                                                            </a>
-                                                            <span x-show="!evidence.file_id" class="text-[11px] text-gray-500">Pendiente</span>
+                                                            <div class="flex items-center gap-2 shrink-0">
+                                                                <a
+                                                                    x-show="evidence.preview_url"
+                                                                    :href="evidence.preview_url"
+                                                                    target="_blank"
+                                                                    rel="noopener"
+                                                                    class="text-[8px] font-medium leading-none text-indigo-600 hover:text-indigo-700">
+                                                                    Ver
+                                                                </a>
+                                                                <a
+                                                                    x-show="evidence.download_url"
+                                                                    :href="evidence.download_url"
+                                                                    class="text-[8px] font-medium leading-none text-emerald-700 hover:text-emerald-800">
+                                                                    Descargar
+                                                                </a>
+                                                                <span x-show="!evidence.preview_url && !evidence.download_url" class="text-[11px] text-gray-500">Pendiente</span>
+                                                            </div>
                                                             </div>
                                                             <div class="text-[11px]" :class="evidence.is_valid ? 'text-emerald-600' : 'text-gray-500'" x-text="evidence.is_valid ? 'Formato valido' : 'Editable (no cuenta como evidencia)'"></div>
                                                         </div>

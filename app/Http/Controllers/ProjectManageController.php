@@ -384,7 +384,11 @@ class ProjectManageController extends Controller
                 return [
                     'id' => $evidence->id,
                     'name' => $evidence->drive_file_name,
+                    'display_name' => $evidence->drive_file_name,
                     'file_id' => $evidence->drive_file_id,
+                    'can_preview' => $evidence->canPreviewInPortal(),
+                    'preview_url' => route('requirement-evidences.preview', ['evidence' => $evidence]),
+                    'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                     'source' => $evidence->source,
                     'is_valid' => (bool) $evidence->in_drive,
                 ];

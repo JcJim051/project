@@ -46,4 +46,24 @@ class RequirementEvidence extends Model
     {
         return $this->belongsTo(User::class, 'linked_by_user_id');
     }
+
+    public function canPreviewInPortal(): bool
+    {
+        $mime = strtolower((string) ($this->drive_mime_type ?? ''));
+        $name = strtolower((string) ($this->drive_file_name ?? ''));
+
+        if ($mime === 'application/pdf' || str_ends_with($name, '.pdf')) {
+            return true;
+        }
+
+        if (str_starts_with($mime, 'image/')) {
+            return true;
+        }
+
+        if (in_array($mime, ['text/plain', 'text/csv'], true)) {
+            return true;
+        }
+
+        return preg_match('/\.(txt|csv|jpe?g|png|gif|webp|bmp|svg)$/', $name) === 1;
+    }
 }

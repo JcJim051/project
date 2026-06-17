@@ -20,6 +20,7 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 
 class ProjectPortfolioResource extends Resource
@@ -63,7 +64,10 @@ class ProjectPortfolioResource extends Resource
                         return 'gray';
                     })
                     ->sortable(),
-                TextColumn::make('prioridadEntidad.nombre')->label('Prioridad entidad'),
+                TextColumn::make('prioridadEntidad.nombre')
+                    ->label('Prioridad entidad')
+                    ->html()
+                    ->formatStateUsing(fn ($state, Project $record): HtmlString|string => ProjectResource::priorityEntityBadgeHtml($record)),
                 TextColumn::make('stage.nombre')->label('Etapa')->badge(),
                 TextColumn::make('status.nombre')->label('Estado')->badge(),
                 TextColumn::make('executionYears.anio')->label('Años')->badge()->separator(', '),

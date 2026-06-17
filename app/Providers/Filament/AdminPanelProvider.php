@@ -74,6 +74,10 @@ class AdminPanelProvider extends PanelProvider
                     '<style>.fi-topbar-database-notifications-btn .fi-badge{background:#dc2626!important;color:#fff!important;border-color:#b91c1c!important;}</style>'
                 ),
             )
+            ->renderHook(
+                PanelsRenderHook::FOOTER,
+                fn (): string => view('filament.panel-footer')->render(),
+            )
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,

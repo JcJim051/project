@@ -28,27 +28,7 @@
                     if (($item->drive_folder_name ?? null) !== ($req->carpeta ?? null)) {
                         return false;
                     }
-                    if (!(bool) ($item->in_drive ?? false)) {
-                        return false;
-                    }
-                    $name = strtolower($item->drive_file_name ?? '');
-                    $isPdf = $item->drive_mime_type === 'application/pdf' || str_ends_with($name, '.pdf');
-                    $isEditable = in_array($item->drive_mime_type, [
-                        'application/vnd.google-apps.document',
-                        'application/vnd.google-apps.spreadsheet',
-                        'application/vnd.google-apps.presentation',
-                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                        'application/msword',
-                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                        'application/vnd.ms-excel',
-                        'application/vnd.ms-excel.sheet.macroenabled.12',
-                        'application/vnd.ms-excel.sheet.binary.macroenabled.12',
-                        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                        'application/vnd.ms-powerpoint',
-                        'application/vnd.ms-project',
-                        'application/x-msproject',
-                    ], true) || preg_match('/\.(docx?|xlsx?|xlsm|xlsb|csv|pptx?|mpp)$/', $name);
-                    return $isPdf || $isEditable;
+                    return (bool) ($item->in_drive ?? false);
                 })
                 ->sortByDesc('id')
                 ->unique(function ($item) {
@@ -120,7 +100,11 @@
                         return [
                             'id' => $evidence->id,
                             'name' => $evidence->drive_file_name,
+                            'display_name' => $evidence->drive_file_name,
                             'file_id' => $evidence->drive_file_id,
+                            'can_preview' => $evidence->canPreviewInPortal(),
+                            'preview_url' => route('requirement-evidences.preview', ['evidence' => $evidence]),
+                            'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                             'source' => $evidence->source,
                             'is_valid' => (bool) $evidence->in_drive,
                             'unlink_url' => route('projects.requirements.unlink_drive_file', [$project, $req, $evidence]),
@@ -134,7 +118,11 @@
                             return [
                                 'id' => $evidence->id,
                                 'name' => $evidence->drive_file_name,
+                                'display_name' => $evidence->drive_file_name,
                                 'file_id' => $evidence->drive_file_id,
+                                'can_preview' => $evidence->canPreviewInPortal(),
+                                'preview_url' => route('requirement-evidences.preview', ['evidence' => $evidence]),
+                                'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                                 'source' => $evidence->source,
                                 'is_valid' => (bool) $evidence->in_drive,
                                 'created_at' => optional($evidence->created_at)->format('Y-m-d H:i'),
@@ -875,8 +863,13 @@
                 },
                 firstEvidenceLink(req) {
                     if (!req || !Array.isArray(req.evidences)) return null;
-                    const found = req.evidences.find(e => !!e.file_id);
-                    return found ? `https://drive.google.com/file/d/${found.file_id}/view` : null;
+                    const found = req.evidences.find(e => !!e.preview_url);
+                    return found ? found.preview_url : null;
+                },
+                firstEvidenceDownloadLink(req) {
+                    if (!req || !Array.isArray(req.evidences)) return null;
+                    const found = req.evidences.find(e => !!e.download_url);
+                    return found ? found.download_url : null;
                 },
                 currentEvidence(req) {
                     if (!req || !Array.isArray(req.evidences) || req.evidences.length === 0) return null;
@@ -1924,7 +1917,10 @@
                                                     <div class="flex items-center justify-between gap-2">
                                                         <div class="text-sm font-semibold leading-snug text-slate-600 truncate" x-text="req.title"></div>
                                                         <template x-if="firstEvidenceLink(req)">
-                                                            <a :href="firstEvidenceLink(req)" target="_blank" rel="noopener" class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">Ver</a>
+                                                            <div class="flex items-center gap-2 shrink-0">
+                                                                <a :href="firstEvidenceLink(req)" target="_blank" rel="noopener" class="text-[8px] font-medium leading-none text-indigo-600 hover:text-indigo-700">Ver</a>
+                                                                <a x-show="firstEvidenceDownloadLink(req)" :href="firstEvidenceDownloadLink(req)" class="text-[8px] font-medium leading-none text-emerald-700 hover:text-emerald-800">Descargar</a>
+                                                            </div>
                                                         </template>
                                                         <template x-if="!firstEvidenceLink(req)">
                                                             <span class="text-[11px]" :class="req.has_evidence ? 'text-emerald-600 font-semibold' : 'text-gray-500'" x-text="req.is_composite_parent ? (req.has_evidence ? 'OK' : 'Parcial') : 'Pendiente'"></span>
@@ -2007,12 +2003,18 @@
                                                                 <div class="font-medium text-gray-700 truncate" x-text="currentEvidence(currentRequirement()).name"></div>
                                                                 <div class="flex items-center gap-2 shrink-0">
                                                                     <a
-                                                                        x-show="currentEvidence(currentRequirement()).file_id"
-                                                                        :href="`https://drive.google.com/file/d/${currentEvidence(currentRequirement()).file_id}/view`"
+                                                                        x-show="currentEvidence(currentRequirement()).preview_url"
+                                                                        :href="currentEvidence(currentRequirement()).preview_url"
                                                                         target="_blank"
                                                                         rel="noopener"
-                                                                        class="text-indigo-600 hover:text-indigo-700">
+                                                                        class="text-[8px] font-medium leading-none text-indigo-600 hover:text-indigo-700">
                                                                         Ver
+                                                                    </a>
+                                                                    <a
+                                                                        x-show="currentEvidence(currentRequirement()).download_url"
+                                                                        :href="currentEvidence(currentRequirement()).download_url"
+                                                                        class="text-[8px] font-medium leading-none text-emerald-700 hover:text-emerald-800">
+                                                                        Descargar
                                                                     </a>
                                                                     <button
                                                                         type="button"
@@ -2296,7 +2298,10 @@
                                 <div class="p-3 border-b border-gray-100 last:border-b-0">
                                     <div class="flex items-start justify-between gap-2">
                                         <div class="text-xs font-medium text-gray-700 break-all" x-text="item.name || 'Sin nombre'"></div>
-                                        <a x-show="item.file_id" :href="`https://drive.google.com/file/d/${item.file_id}/view`" target="_blank" rel="noopener" class="text-[11px] text-indigo-600 hover:text-indigo-700">Ver</a>
+                                        <div class="flex items-center gap-2 shrink-0">
+                                            <a x-show="item.preview_url" :href="item.preview_url" target="_blank" rel="noopener" class="text-[8px] font-medium leading-none text-indigo-600 hover:text-indigo-700">Ver</a>
+                                            <a x-show="item.download_url" :href="item.download_url" class="text-[8px] font-medium leading-none text-emerald-700 hover:text-emerald-800">Descargar</a>
+                                        </div>
                                     </div>
                                     <div class="mt-1 text-[11px] text-gray-500">
                                         <span x-text="item.created_at || '-'"></span>
