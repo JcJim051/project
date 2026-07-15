@@ -12,6 +12,9 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
         // Avoid requiring doctrine/dbal by using raw SQL.
         DB::statement('ALTER TABLE requirements MODIFY archivo LONGTEXT');
     }
@@ -21,6 +24,9 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
         DB::statement('ALTER TABLE requirements MODIFY archivo VARCHAR(255)');
     }
 };

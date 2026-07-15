@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Events\GamificationActivityTriggered;
+use App\Jobs\ProvisionPlaneProjectJob;
 use App\Models\Project;
 use App\Models\Requirement;
 use App\Models\RequirementEvidence;
@@ -234,7 +235,27 @@ class ProjectManageController extends Controller
             'visible' => true,
         ]);
 
-        $project->requisitos()->syncWithoutDetaching([$requirement->id]);
+        $activatedAt = now();
+        $project->requisitos()->syncWithoutDetaching([
+            $requirement->id => ['activated_at' => $activatedAt],
+        ]);
+        \App\Models\OperationalActivityEvent::query()->create([
+            'project_id' => $project->id,
+            'requirement_id' => $requirement->id,
+            'event_type' => 'requirement_activated',
+            'source' => 'orbit_custom_requirement',
+            'new_value' => ['active' => true],
+            'occurred_at' => $activatedAt,
+        ]);
+
+        if ($project->plane_project_id) {
+            $project->forceFill([
+                'plane_sync_status' => 'pending',
+                'plane_last_error' => null,
+            ])->save();
+
+            ProvisionPlaneProjectJob::dispatch($project->id);
+        }
 
         $uploaded = null;
         if ($request->hasFile('archivo')) {

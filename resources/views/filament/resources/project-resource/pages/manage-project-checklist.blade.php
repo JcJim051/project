@@ -1,4 +1,12 @@
 <x-filament-panels::page>
+    @php
+        $requirements = $requirements ?? collect();
+        $applied = $applied ?? [];
+        $totalsByFolder = $totalsByFolder ?? collect();
+        $studyAssignments = $studyAssignments ?? [];
+        $specialistOptions = $specialistOptions ?? [];
+        $specialistDetails = $specialistDetails ?? [];
+    @endphp
     <div class="space-y-4">
         <div class="text-sm text-gray-500">Proyecto: {{ $project->nombre }}</div>
 
@@ -450,6 +458,46 @@
                                                 </div>
                                             </summary>
                                             <div class="p-3 space-y-3">
+                                                <div class="rounded-md border border-emerald-100 bg-emerald-50/60 p-3 space-y-2">
+                                                    <div class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Especialista del estudio</div>
+                                                    <select name="study_specialists[{{ $carpeta }}]" class="w-full rounded-md border-gray-300 text-sm focus:border-emerald-400 focus:ring-emerald-300">
+                                                        <option value="">Sin asignar</option>
+                                                        @foreach (($specialistOptions ?? []) as $specialistId => $specialistLabel)
+                                                            <option value="{{ $specialistId }}" {{ (int) (($studyAssignments[$carpeta] ?? 0)) === (int) $specialistId ? 'selected' : '' }}>{{ $specialistLabel }}</option>
+                                                        @endforeach
+                                                    </select>
+                                                    @php
+                                                        $selectedSpecialistId = (int) (($studyAssignments[$carpeta] ?? 0) ?: 0);
+                                                        $selectedSpecialist = $selectedSpecialistId > 0 ? (($specialistDetails ?? [])[$selectedSpecialistId] ?? null) : null;
+                                                        $planeState = $selectedSpecialist['plane_sync_status'] ?? null;
+                                                        $planeStateLabel = match ($planeState) {
+                                                            'linked' => 'Vinculado en Plane',
+                                                            'not_found' => 'No encontrado en Plane',
+                                                            'error' => 'Con novedad en Plane',
+                                                            default => 'Pendiente por sincronizar',
+                                                        };
+                                                        $planeStateClass = match ($planeState) {
+                                                            'linked' => 'border-emerald-200 bg-emerald-100 text-emerald-700',
+                                                            'not_found' => 'border-amber-200 bg-amber-100 text-amber-800',
+                                                            'error' => 'border-rose-200 bg-rose-100 text-rose-700',
+                                                            default => 'border-gray-200 bg-gray-100 text-gray-600',
+                                                        };
+                                                    @endphp
+                                                    @if ($selectedSpecialist)
+                                                        <div class="flex flex-wrap items-center gap-2">
+                                                            <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold {{ $planeStateClass }}">
+                                                                {{ $planeStateLabel }}
+                                                            </span>
+                                                            <span class="text-[11px] text-gray-600">{{ $selectedSpecialist['correo'] }}</span>
+                                                        </div>
+                                                        @if (!empty($selectedSpecialist['plane_last_error']) && $planeState !== 'linked')
+                                                            <div class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-800">
+                                                                {{ $selectedSpecialist['plane_last_error'] }}
+                                                            </div>
+                                                        @endif
+                                                    @endif
+                                                    <div class="text-[11px] text-emerald-700/80">Orbit usará este especialista para resolver el vínculo con Plane por correo justo cuando sincronice las actividades del estudio.</div>
+                                                </div>
                                                 @php
                                                     $flat = collect();
                                                     foreach ($groups as $group) {

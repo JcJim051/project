@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\ProjectResource\Pages;
 
+use App\Jobs\ProvisionPlaneProjectJob;
 use App\Filament\Resources\ProjectResource;
 use App\Models\Municipio;
 use App\Models\Project;
@@ -108,6 +109,15 @@ class CreateProject extends CreateRecord
         $service = app(ProjectBankExcelService::class);
         $service->ensureSeeded($this->record);
         $service->saveProfile($this->record, $this->bankProfileData);
+
+        $this->record->forceFill(['plane_sync_status' => 'pending', 'plane_last_error' => null])->save();
+        ProvisionPlaneProjectJob::dispatch($this->record->id);
+
+        Notification::make()
+            ->title('Capa operativa enviada a Plane')
+            ->body('La creación operativa del proyecto fue enviada a la cola para provisionarse en Plane.')
+            ->success()
+            ->send();
 
         if ($this->driveSetupWarning) {
             Notification::make()

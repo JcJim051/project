@@ -444,6 +444,31 @@ class ProjectResource extends Resource
                             ->label('Observaciones')
                             ->rows(2),
                     ]),
+                Section::make('Capa operativa Plane')
+                    ->collapsible()
+                    ->collapsed()
+                    ->visible(fn (string $operation): bool => $operation === 'edit' && Schema::hasColumn('projects', 'plane_sync_status'))
+                    ->schema([
+                        Placeholder::make('plane_sync_status_info')
+                            ->label('Estado de provisión')
+                            ->content(fn (?Project $record): string => $record?->plane_sync_status ? match ($record->plane_sync_status) {
+                                'pending' => 'Pendiente de provisión',
+                                'provisioned' => 'Provisionado correctamente',
+                                'failed' => 'Falló la provisión',
+                                default => (string) $record->plane_sync_status,
+                            } : 'Sin provisión'),
+                        Placeholder::make('resolved_plane_project_url_info')
+                            ->label('Proyecto en Plane')
+                            ->content(fn (?Project $record): HtmlString => $record?->resolved_plane_project_url
+                                ? new HtmlString('<a class="text-primary-600 underline" href="' . e($record->resolved_plane_project_url) . '" target="_blank" rel="noopener">Abrir proyecto en Plane</a>')
+                                : new HtmlString('<span class="text-gray-500">Aún no disponible</span>')),
+                        Placeholder::make('plane_last_provisioned_at_info')
+                            ->label('Última provisión')
+                            ->content(fn (?Project $record): string => $record?->plane_last_provisioned_at?->format('Y-m-d H:i:s') ?: 'No registrada'),
+                        Placeholder::make('plane_last_error_info')
+                            ->label('Último error')
+                            ->content(fn (?Project $record): string => $record?->plane_last_error ?: 'Sin errores registrados'),
+                    ]),
                 Section::make('Drive')
                     ->collapsible()
                     ->collapsed()
@@ -988,6 +1013,7 @@ class ProjectResource extends Resource
             'create' => Pages\CreateProject::route('/create'),
             'edit' => Pages\EditProject::route('/{record}/edit'),
             'checklist' => Pages\ManageProjectChecklist::route('/{record}/checklist'),
+            'plane' => Pages\ManageProjectPlane::route('/{record}/plane'),
             'manage' => Pages\ManageProject::route('/{record}/manage'),
             'review' => Pages\ReviewProject::route('/{record}/review'),
             'bank' => Pages\ManageProjectBank::route('/{record}/banco'),

@@ -19,7 +19,19 @@ return new class extends Migration
             $table->string('carpeta')->nullable()->after('nombre_documento');
         });
 
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('requirements', function (Blueprint $table) {
+                $table->dropColumn(['categoria', 'sector', 'codigo', 'descripcion', 'nivel1', 'nivel2', 'nivel3', 'archivo', 'extension', 'aplica', 'coordinador']);
+            });
+            return;
+        }
+
         // Drop legacy columns using raw SQL to avoid doctrine/dbal dependency.
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('requirements', fn (Blueprint $table) => $table->dropColumn(['numeracion', 'requisito', 'nombre_documento', 'carpeta']));
+            return;
+        }
+
         DB::statement('ALTER TABLE requirements 
             DROP COLUMN categoria,
             DROP COLUMN sector,

@@ -2,16 +2,34 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProvisionPlaneProjectJob;
 use App\Models\Project;
+use App\Models\ProjectStudySpecialistAssignment;
 use App\Models\Requirement;
+use App\Models\Specialist;
+use App\Services\OperationalActivityMappingService;
+use App\Services\PlaneProvisioningService;
 use App\Services\ProjectStatusService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class ChecklistController extends Controller
 {
+    public function __construct(
+        private readonly OperationalActivityMappingService $mappingService,
+    ) {
+    }
+
     public function show(Project $project)
     {
-        $project->load('sectores');
+        $relations = ['sectores'];
+        if (Schema::hasTable('project_study_specialist_assignments') && Schema::hasTable('specialists')) {
+            if (Schema::hasTable('specialists')) {
+                $relations[] = 'studySpecialistAssignments.specialist';
+            }
+            $relations[] = 'studySpecialistAssignments.user';
+        }
+        $project->load($relations);
         $sectorCatalog = $this->projectSectorCatalog($project);
 
         $requirements = Requirement::query()
@@ -30,6 +48,38 @@ class ChecklistController extends Controller
         $requirements = $this->filterSectorial($requirements, $sectorCatalog['names']);
 
         $applied = $project->requisitos()->pluck('requirements.id')->all();
+        $studyFolders = $this->mappingService->applicableStudyFolders($project)->all();
+        $studyAssignments = Schema::hasTable('project_study_specialist_assignments')
+            ? $project->studySpecialistAssignments
+                ->mapWithKeys(fn ($assignment) => [$assignment->study_folder => $assignment->specialist_id ? (int) $assignment->specialist_id : ($assignment->user_id ? (int) $assignment->user_id : null)])
+                ->all()
+            : [];
+
+        $specialistOptions = Schema::hasTable('specialists')
+            ? Specialist::query()
+                ->where('activo', true)
+                ->whereNotNull('correo')
+                ->where('correo', '!=', '')
+                ->orderBy('nombre')
+                ->get(['id', 'nombre', 'correo', 'especialidad'])
+                ->mapWithKeys(fn (Specialist $specialist) => [$specialist->id => trim($specialist->nombre . ($specialist->especialidad ? ' · ' . $specialist->especialidad : '') . ' · ' . $specialist->correo)])
+                ->all()
+            : [];
+
+        $specialistDetails = Schema::hasTable('specialists')
+            ? Specialist::query()
+                ->whereIn('id', array_filter(array_values($studyAssignments)))
+                ->get(['id', 'nombre', 'correo', 'plane_sync_status', 'plane_last_error', 'plane_user_id'])
+                ->mapWithKeys(fn (Specialist $specialist) => [$specialist->id => [
+                    'id' => (int) $specialist->id,
+                    'nombre' => (string) $specialist->nombre,
+                    'correo' => (string) $specialist->correo,
+                    'plane_sync_status' => (string) ($specialist->plane_sync_status ?: 'pending'),
+                    'plane_last_error' => (string) ($specialist->plane_last_error ?: ''),
+                    'plane_user_id' => (string) ($specialist->plane_user_id ?: ''),
+                ]])
+                ->all()
+            : [];
 
         $totalsByFolder = $requirements
             ->groupBy(function ($req) {
@@ -55,11 +105,10 @@ class ChecklistController extends Controller
             })
             ->map(function ($items, $folderName) {
                 $isSectorialFolder = str_contains($this->normalizeSector((string) $folderName), 'documentos sectoriales');
-                if (!$isSectorialFolder) {
+                if (! $isSectorialFolder) {
                     return $this->buildRequirementGroups($items);
                 }
 
-                // Prevent mixed parent/child trees across different sectors.
                 $groups = [];
                 $itemsBySector = $items->groupBy(function ($req) {
                     return $this->normalizeSector($req->sector) ?: 'sin-sector';
@@ -79,6 +128,10 @@ class ChecklistController extends Controller
             'applied' => $applied,
             'totalsByFolder' => $totalsByFolder,
             'sectorCatalog' => $sectorCatalog,
+            'studyFolders' => $studyFolders,
+            'studyAssignments' => $studyAssignments,
+            'specialistOptions' => $specialistOptions,
+            'specialistDetails' => $specialistDetails,
         ]);
     }
 
@@ -86,14 +139,93 @@ class ChecklistController extends Controller
     {
         $this->authorizeProjectMutation();
 
+        $project->load('sectores');
+        $studyFolders = $this->mappingService->applicableStudyFolders($project)->all();
+
         $data = $request->validate([
             'aplica' => ['array'],
             'aplica.*' => ['integer', 'exists:requirements,id'],
+            'study_specialists' => ['array'],
+            'study_specialists.*' => array_filter([
+                'nullable',
+                'integer',
+                Schema::hasTable('specialists') ? 'exists:specialists,id' : null,
+            ]),
         ]);
 
-        $ids = $data['aplica'] ?? [];
-        $project->requisitos()->sync($ids);
+        $ids = collect($data['aplica'] ?? [])->map(fn ($id) => (int) $id)->unique()->values();
+        $existing = $project->requisitos()->newPivotQuery()->pluck('activated_at', 'requirement_id');
+        $now = now();
+        $syncPayload = $ids->mapWithKeys(fn (int $id) => [
+            $id => ['activated_at' => $existing->get($id) ?: $now],
+        ])->all();
+
+        $attached = $ids->diff($existing->keys()->map(fn ($id) => (int) $id));
+        $detached = $existing->keys()->map(fn ($id) => (int) $id)->diff($ids);
+
+        $project->requisitos()->sync($syncPayload);
+
+        foreach ($attached as $requirementId) {
+            \App\Models\OperationalActivityEvent::query()->create([
+                'project_id' => $project->id,
+                'requirement_id' => $requirementId,
+                'event_type' => 'requirement_activated',
+                'source' => 'orbit_checklist',
+                'new_value' => ['active' => true],
+                'occurred_at' => $now,
+            ]);
+        }
+        foreach ($detached as $requirementId) {
+            \App\Models\OperationalActivityEvent::query()->create([
+                'project_id' => $project->id,
+                'requirement_id' => $requirementId,
+                'event_type' => 'requirement_deactivated',
+                'source' => 'orbit_checklist',
+                'old_value' => ['active' => true],
+                'new_value' => ['active' => false],
+                'occurred_at' => $now,
+            ]);
+        }
         app(ProjectStatusService::class)->setByName($project, 'Formulación y presentación');
+
+        if (Schema::hasTable('project_study_specialist_assignments') && Schema::hasTable('specialists')) {
+            $incomingAssignments = collect($data['study_specialists'] ?? []);
+            foreach ($studyFolders as $folder) {
+                $userId = $incomingAssignments->has($folder) ? (int) ($incomingAssignments->get($folder) ?: 0) : 0;
+                if ($userId > 0) {
+                    ProjectStudySpecialistAssignment::query()->updateOrCreate(
+                        ['project_id' => $project->id, 'study_folder' => $folder],
+                        ['specialist_id' => $userId, 'user_id' => null]
+                    );
+                } else {
+                    ProjectStudySpecialistAssignment::query()
+                        ->where('project_id', $project->id)
+                        ->where('study_folder', $folder)
+                        ->delete();
+                }
+            }
+
+            $assignedSpecialists = ProjectStudySpecialistAssignment::query()
+                ->with('specialist')
+                ->where('project_id', $project->id)
+                ->whereNotNull('specialist_id')
+                ->get()
+                ->pluck('specialist')
+                ->filter();
+
+            if ($assignedSpecialists->isNotEmpty()) {
+                app(PlaneProvisioningService::class)->syncSpecialistsAgainstPlane($assignedSpecialists);
+            }
+        }
+
+        if ($project->plane_project_id) {
+            $project->forceFill([
+                'plane_sync_status' => 'pending',
+                'plane_last_error' => null,
+            ])->save();
+
+            ProvisionPlaneProjectJob::dispatch($project->id);
+        }
 
         if ($request->boolean('panel_return')) {
             return redirect()
@@ -130,7 +262,6 @@ class ChecklistController extends Controller
                 return true;
             }
 
-            // Accept inverse wording matches like "recreacion y deporte" vs "deporte y recreacion".
             $reqTokens = collect(explode(' ', str_replace(' y ', ' ', $reqSector)))
                 ->filter(fn ($t) => $t !== '')
                 ->values()
@@ -140,7 +271,7 @@ class ChecklistController extends Controller
                 ->values()
                 ->all();
 
-            if (!empty($reqTokens) && !empty($projTokens)) {
+            if (! empty($reqTokens) && ! empty($projTokens)) {
                 sort($reqTokens);
                 sort($projTokens);
                 if ($reqTokens === $projTokens) {
@@ -159,10 +290,10 @@ class ChecklistController extends Controller
     private function projectSectorCatalog(Project $project): array
     {
         $primary = $project->sectores->first(fn ($sector) => (bool) ($sector->pivot->is_primary ?? false));
-        if (!$primary) {
+        if (! $primary) {
             $primary = $project->sectores->first();
         }
-        $secondary = $project->sectores->filter(fn ($s) => !(bool) ($s->pivot->is_primary ?? false));
+        $secondary = $project->sectores->filter(fn ($s) => ! (bool) ($s->pivot->is_primary ?? false));
         if ($primary) {
             $secondary = $secondary->reject(fn ($s) => (int) $s->id === (int) $primary->id);
         }
@@ -204,7 +335,7 @@ class ChecklistController extends Controller
                 $parentKey = $req->id;
             }
 
-            if (!isset($groups[$parentKey])) {
+            if (! isset($groups[$parentKey])) {
                 $groups[$parentKey] = [
                     'parent' => $byId->get($parentKey),
                     'children' => [],
@@ -241,7 +372,7 @@ class ChecklistController extends Controller
     private function authorizeProjectMutation(): void
     {
         $user = auth()->user();
-        if (!$user || !$user->canMutateProjects()) {
+        if (! $user || ! $user->canMutateProjects()) {
             abort(403);
         }
     }

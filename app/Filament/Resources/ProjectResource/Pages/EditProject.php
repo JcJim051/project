@@ -2,11 +2,13 @@
 
 namespace App\Filament\Resources\ProjectResource\Pages;
 
+use App\Jobs\ProvisionPlaneProjectJob;
 use App\Filament\Resources\ProjectResource;
 use App\Models\Municipio;
 use App\Models\Project;
 use App\Services\ProjectBankExcelService;
 use Filament\Actions;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 
 class EditProject extends EditRecord
@@ -21,6 +23,24 @@ class EditProject extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            Actions\Action::make('retryPlaneProvision')
+                ->label('Reintentar Plane')
+                ->icon('heroicon-o-arrow-path')
+                ->visible(fn (): bool => (bool) auth()->user()?->isAdminUser())
+                ->action(function (): void {
+                    $this->record->forceFill([
+                        'plane_sync_status' => 'pending',
+                        'plane_last_error' => null,
+                    ])->save();
+
+                    ProvisionPlaneProjectJob::dispatch($this->record->id);
+
+                    Notification::make()
+                        ->title('Provisionamiento reenviado')
+                        ->body('La capa operativa se reenviará a Plane en segundo plano.')
+                        ->success()
+                        ->send();
+                }),
             Actions\DeleteAction::make(),
         ];
     }

@@ -22,7 +22,18 @@ class ManageProjectChecklist extends Page
     public function mount(int|string $record): void
     {
         $this->record = $this->resolveRecord($record);
+        $this->hydrateChecklistViewData();
+    }
 
+    protected function getViewData(): array
+    {
+        $this->hydrateChecklistViewData();
+
+        return $this->viewData;
+    }
+
+    private function hydrateChecklistViewData(): void
+    {
         /** @var ChecklistController $controller */
         $controller = app(ChecklistController::class);
         $response = $controller->show($this->record);
@@ -35,13 +46,12 @@ class ManageProjectChecklist extends Page
                 'applied' => $data['applied'] ?? [],
                 'totalsByFolder' => $data['totalsByFolder'] ?? collect(),
                 'sectorCatalog' => $data['sectorCatalog'] ?? ['ordered' => [], 'names' => []],
+                'studyFolders' => $data['studyFolders'] ?? [],
+                'studyAssignments' => $data['studyAssignments'] ?? [],
+                'specialistOptions' => $data['specialistOptions'] ?? [],
+                'specialistDetails' => $data['specialistDetails'] ?? [],
             ];
         }
-    }
-
-    protected function getViewData(): array
-    {
-        return $this->viewData;
     }
 
     public function getHeading(): string
@@ -54,6 +64,10 @@ class ManageProjectChecklist extends Page
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('plane')
+                ->label('Capa operativa')
+                ->icon('heroicon-o-circle-stack')
+                ->url(ProjectResource::getUrl('plane', ['record' => $this->record])),
             Action::make('gestionar')
                 ->label('Ir a Gestionar')
                 ->icon('heroicon-o-folder')

@@ -1484,7 +1484,7 @@ class GoogleDriveService
             }
         }
 
-        if (Str::contains($requirementName, 'verificacion de requisitos') || Str::contains($requirementName, 'excel')) {
+        if (Str::contains($requirementName, 'verificacion de requisitos') || Str::contains($requirementName, 'soporte de diagnostico') || Str::contains($requirementName, 'excel')) {
             if (Str::endsWith($fileName, ['.xls', '.xlsx', '.xlsm'])) {
                 return true;
             }
