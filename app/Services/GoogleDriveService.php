@@ -1451,82 +1451,74 @@ class GoogleDriveService
         return $this->isValidEvidence($name, $mimeType, $requirement);
     }
 
-    private function isValidEvidence(string $name, ?string $mimeType, Requirement $requirement): bool
+    public function inferEvidenceFormatRule(Requirement $requirement): string
     {
         $requirementName = Str::lower(Str::ascii($requirement->nombre_documento ?? $requirement->requisito ?? ''));
-        $fileName = Str::lower($name);
 
         if (Str::contains($requirementName, 'localizacion kml') || Str::contains($requirementName, 'localizacion klm')) {
-            if (Str::endsWith($fileName, ['.kml', '.klm'])) {
-                return true;
-            }
-            if (in_array($mimeType, [
-                'application/vnd.google-earth.kml+xml',
-                'application/vnd.google-earth.kmz',
-                'application/xml',
-                'text/xml',
-            ], true)) {
-                return true;
-            }
+            return Requirement::EVIDENCE_RULE_KML;
         }
 
         if (Str::contains($requirementName, 'presentacion')) {
-            if (Str::endsWith($fileName, ['.ppt', '.pptx']) || $this->isPdfFile($name, $mimeType)) {
-                return true;
-            }
-            if (in_array($mimeType, [
-                'application/vnd.google-apps.presentation',
-                'application/vnd.ms-powerpoint',
-                'application/powerpoint',
-                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            ], true)) {
-                return true;
-            }
+            return Requirement::EVIDENCE_RULE_ANY;
         }
 
-        if (Str::contains($requirementName, 'verificacion de requisitos') || Str::contains($requirementName, 'soporte de diagnostico') || Str::contains($requirementName, 'excel')) {
-            if (Str::endsWith($fileName, ['.xls', '.xlsx', '.xlsm'])) {
-                return true;
-            }
-            if (in_array($mimeType, [
-                'application/vnd.google-apps.spreadsheet',
-                'application/vnd.ms-excel',
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'application/vnd.ms-excel.sheet.macroenabled.12',
-                'text/csv',
-                'application/csv',
-            ], true)) {
-                return true;
-            }
+        if (
+            Str::contains($requirementName, 'verificacion de requisitos')
+            || Str::contains($requirementName, 'soporte de diagnostico')
+            || Str::contains($requirementName, 'excel')
+        ) {
+            return Requirement::EVIDENCE_RULE_EXCEL;
         }
 
         if (preg_match('/\bproject\b/', $requirementName)) {
-            if (Str::endsWith($fileName, ['.mpp'])) {
-                return true;
-            }
-            if (in_array($mimeType, [
-                'application/vnd.ms-project',
-                'application/x-msproject',
-                'application/octet-stream',
-            ], true)) {
-                return true;
-            }
+            return Requirement::EVIDENCE_RULE_PROJECT;
         }
 
         if (Str::contains($requirementName, 'powerpoint') || Str::contains($requirementName, 'power point')) {
-            if (Str::endsWith($fileName, ['.ppt', '.pptx'])) {
-                return true;
-            }
-            if (in_array($mimeType, [
-                'application/vnd.google-apps.presentation',
-                'application/vnd.ms-powerpoint',
-                'application/powerpoint',
-                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            ], true)) {
-                return true;
-            }
+            return Requirement::EVIDENCE_RULE_POWERPOINT;
         }
 
-        return $this->isPdfFile($name, $mimeType);
+        return Requirement::EVIDENCE_RULE_PDF;
+    }
+
+    private function isValidEvidence(string $name, ?string $mimeType, Requirement $requirement): bool
+    {
+        $rule = $requirement->evidence_format_rule ?: $this->inferEvidenceFormatRule($requirement);
+        $fileName = Str::lower($name);
+
+        return match ($rule) {
+            Requirement::EVIDENCE_RULE_ANY => true,
+            Requirement::EVIDENCE_RULE_KML => Str::endsWith($fileName, ['.kml', '.kmz', '.klm'])
+                || in_array($mimeType, [
+                    'application/vnd.google-earth.kml+xml',
+                    'application/vnd.google-earth.kmz',
+                    'application/xml',
+                    'text/xml',
+                ], true),
+            Requirement::EVIDENCE_RULE_EXCEL => Str::endsWith($fileName, ['.xls', '.xlsx', '.xlsm'])
+                || in_array($mimeType, [
+                    'application/vnd.google-apps.spreadsheet',
+                    'application/vnd.ms-excel',
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'application/vnd.ms-excel.sheet.macroenabled.12',
+                    'text/csv',
+                    'application/csv',
+                ], true),
+            Requirement::EVIDENCE_RULE_PROJECT => Str::endsWith($fileName, ['.mpp'])
+                || in_array($mimeType, [
+                    'application/vnd.ms-project',
+                    'application/x-msproject',
+                    'application/octet-stream',
+                ], true),
+            Requirement::EVIDENCE_RULE_POWERPOINT => Str::endsWith($fileName, ['.ppt', '.pptx'])
+                || in_array($mimeType, [
+                    'application/vnd.google-apps.presentation',
+                    'application/vnd.ms-powerpoint',
+                    'application/powerpoint',
+                    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                ], true),
+            default => $this->isPdfFile($name, $mimeType),
+        };
     }
 }

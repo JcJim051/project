@@ -87,6 +87,16 @@
                     'composite_done' => $compositeDone,
                     'composite_total' => $compositeTotal,
                     'count_in_progress' => (bool) ($status['count_in_progress'] ?? true),
+                    'evidence_format_rule' => $req->evidence_format_rule,
+                    'evidence_format_label' => \App\Models\Requirement::evidenceFormatRuleLabel($req->evidence_format_rule),
+                    'upload_accept' => match ($req->evidence_format_rule) {
+                        \App\Models\Requirement::EVIDENCE_RULE_EXCEL => '.xls,.xlsx,.xlsm,.csv',
+                        \App\Models\Requirement::EVIDENCE_RULE_POWERPOINT => '.ppt,.pptx',
+                        \App\Models\Requirement::EVIDENCE_RULE_KML => '.kml,.kmz,.klm',
+                        \App\Models\Requirement::EVIDENCE_RULE_PROJECT => '.mpp',
+                        \App\Models\Requirement::EVIDENCE_RULE_PDF => '.pdf',
+                        default => '',
+                    },
                     'composite_message' => $isCompositeParent
                         ? 'Este requisito se cumple automáticamente con los documentos activos de la carpeta ' . $compositeFolder . '.'
                         : null,
@@ -1963,8 +1973,11 @@
                                                     <div class="space-y-3 rounded-lg border-2 border-emerald-200 bg-emerald-50/70 p-3">
                                                         <div class="space-y-2">
                                                             <label class="text-xs font-semibold text-emerald-800">Archivo de evidencia</label>
+                                                            <div class="text-[11px] text-emerald-800/80">
+                                                                Cuenta como válido: <span class="font-semibold" x-text="currentRequirement().evidence_format_label || 'Sin regla'"></span>
+                                                            </div>
                                                             <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                                                <input type="file" x-ref="requirementUploadInput" @change="enqueueCurrentRequirement($event)" class="block min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
+                                                                <input type="file" x-ref="requirementUploadInput" :accept="currentRequirement().upload_accept || null" @change="enqueueCurrentRequirement($event)" class="block min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
                                                                 <button
                                                                     type="button"
                                                                     @click="processUploadQueue()"

@@ -48,6 +48,7 @@ class RequirementController extends Controller
                 'literal',
                 'nombre_documento',
                 'carpeta',
+                'evidence_format_rule',
                 'origen',
             ]);
 
@@ -73,6 +74,7 @@ class RequirementController extends Controller
             'Literal',
             'Nombre de documento',
             'carpeta',
+            'FORMATO_EVIDENCIA',
             'origen',
         ], null, 'A1');
 
@@ -91,6 +93,7 @@ class RequirementController extends Controller
                 $req->literal,
                 $req->nombre_documento,
                 $req->carpeta,
+                $req->evidence_format_rule,
                 $req->origen,
             ], null, 'A' . $row);
             $row++;
@@ -318,6 +321,7 @@ class RequirementController extends Controller
             'LITERAL',
             'NOMBRE DE DOCUMENTO',
             'CARPETA',
+            'FORMATO_EVIDENCIA',
             'ORIGEN',
         ];
 
@@ -364,6 +368,7 @@ class RequirementController extends Controller
             $orden = $this->getCellValue($row, $headerMap['ORDEN'] ?? null, $isAssoc);
             $literal = $this->getCellValue($row, $headerMap['LITERAL'] ?? null, $isAssoc);
             $origen = $this->getCellValue($row, $headerMap['ORIGEN'] ?? null, $isAssoc);
+            $evidenceFormatRule = $this->getCellValue($row, $headerMap['FORMATO_EVIDENCIA'] ?? null, $isAssoc);
 
             $numeracion = $this->formatNumeracion($numeracion);
             $requisito = trim((string) $requisito);
@@ -380,6 +385,7 @@ class RequirementController extends Controller
             $orden = trim((string) $orden);
             $literal = trim((string) $literal);
             $origen = trim((string) $origen);
+            $evidenceFormatRule = mb_strtolower(trim((string) $evidenceFormatRule));
 
             if ($codigoInterno !== '') {
                 $numeracion = $codigoInterno;
@@ -407,6 +413,7 @@ class RequirementController extends Controller
                 'requisito' => $requisito !== '' ? $requisito : $nombreDocumento,
                 'nombre_documento' => $nombreDocumento !== '' ? $nombreDocumento : $requisito,
                 'carpeta' => $carpeta,
+                'evidence_format_rule' => $this->normalizeEvidenceFormatRule($evidenceFormatRule),
                 'origen' => $origen !== '' ? $origen : null,
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -437,6 +444,7 @@ class RequirementController extends Controller
                 'LITERAL',
                 'NOMBRE DE DOCUMENTO',
                 'CARPETA',
+                'FORMATO_EVIDENCIA',
                 'ORIGEN',
                 'NUMERACION',
                 'REQUISITO',
@@ -500,6 +508,31 @@ class RequirementController extends Controller
         $nombreDocumento = mb_strtolower($this->normalizeKeyPart($nombreDocumento));
         $codigoInterno = mb_strtolower($this->normalizeKeyPart($codigoInterno));
         return $carpeta . '|' . $nombreDocumento . '|' . $codigoInterno;
+    }
+
+    private function normalizeEvidenceFormatRule(?string $value): ?string
+    {
+        $normalized = mb_strtolower(trim((string) $value));
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        $aliases = [
+            'ppt' => Requirement::EVIDENCE_RULE_POWERPOINT,
+            'pptx' => Requirement::EVIDENCE_RULE_POWERPOINT,
+            'power point' => Requirement::EVIDENCE_RULE_POWERPOINT,
+            'xlsx' => Requirement::EVIDENCE_RULE_EXCEL,
+            'xls' => Requirement::EVIDENCE_RULE_EXCEL,
+            'xlsm' => Requirement::EVIDENCE_RULE_EXCEL,
+            'kmz' => Requirement::EVIDENCE_RULE_KML,
+            'any' => Requirement::EVIDENCE_RULE_ANY,
+            'todos' => Requirement::EVIDENCE_RULE_ANY,
+        ];
+
+        $normalized = $aliases[$normalized] ?? $normalized;
+
+        return array_key_exists($normalized, Requirement::evidenceFormatRuleOptions()) ? $normalized : null;
     }
 
     private function normalizeKeyPart(string $value): string

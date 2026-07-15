@@ -20,6 +20,7 @@
                 <div>
                     <h3 class="text-lg font-semibold text-gray-800">Carga masiva de requisitos</h3>
                     <p class="text-sm text-gray-600">Importa por actualización segura o actualización con creación de nuevos.</p>
+                    <p class="text-sm text-gray-500">La columna opcional <span class="font-semibold">FORMATO_EVIDENCIA</span> acepta: <span class="font-mono">pdf</span>, <span class="font-mono">excel</span>, <span class="font-mono">powerpoint</span>, <span class="font-mono">kml</span>, <span class="font-mono">project</span> o <span class="font-mono">cualquiera</span>.</p>
                     <p class="text-sm text-gray-500">Actualmente hay <span class="font-semibold">{{ $count }}</span> requisitos cargados.</p>
                 </div>
 

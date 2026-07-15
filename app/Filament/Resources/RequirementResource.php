@@ -89,6 +89,11 @@ class RequirementResource extends Resource
                         TextInput::make('carpeta')
                             ->label('Carpeta')
                             ->maxLength(255),
+                        Select::make('evidence_format_rule')
+                            ->label('Formato que cuenta')
+                            ->options(Requirement::evidenceFormatRuleOptions())
+                            ->helperText('Define qué tipo de archivo marca este requisito como cumplido. Usa "Cualquiera" cuando pueda ser más de un formato.')
+                            ->searchable(),
                         TextInput::make('sector')
                             ->label('Sector')
                             ->maxLength(255),
@@ -144,6 +149,11 @@ class RequirementResource extends Resource
                     ->wrap()
                     ->toggleable(isToggledHiddenByDefault: true)
                     ->searchable(),
+                TextColumn::make('evidence_format_rule')
+                    ->label('Formato válido')
+                    ->formatStateUsing(fn (?string $state): string => Requirement::evidenceFormatRuleLabel($state))
+                    ->badge()
+                    ->color(fn (?string $state): string => $state === Requirement::EVIDENCE_RULE_ANY ? 'warning' : 'gray'),
                 SelectColumn::make('requiere_check')
                     ->label('Requisito')
                     ->options([
@@ -167,6 +177,9 @@ class RequirementResource extends Resource
                         'SI' => 'SI',
                         'NO' => 'NO',
                     ]),
+                SelectFilter::make('evidence_format_rule')
+                    ->label('Formato válido')
+                    ->options(Requirement::evidenceFormatRuleOptions()),
                 SelectFilter::make('sector')
                     ->label('Sector')
                     ->options(fn () => Requirement::query()

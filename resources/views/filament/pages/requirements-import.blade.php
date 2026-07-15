@@ -20,6 +20,9 @@
             <p class="text-sm text-gray-600 mb-4">
                 Carga el archivo unificado en formato Excel/CSV. Puedes usar modo estricto o modo actualizar+crear.
             </p>
+            <p class="text-sm text-gray-500 mb-4">
+                La columna opcional <span class="font-semibold">FORMATO_EVIDENCIA</span> acepta <span class="font-mono">pdf</span>, <span class="font-mono">excel</span>, <span class="font-mono">powerpoint</span>, <span class="font-mono">kml</span>, <span class="font-mono">project</span> o <span class="font-mono">cualquiera</span>.
+            </p>
 
             <form method="POST" action="{{ route('requirements.import.store') }}" enctype="multipart/form-data" class="space-y-4">
                 @csrf
@@ -60,4 +63,3 @@
         </div>
     </div>
 </x-filament-panels::page>
-

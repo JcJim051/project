@@ -70,6 +70,16 @@
                     'study_name' => $studyName,
                     'has_evidence' => $hasEvidence,
                     'valid_evidence_count' => $validEvidenceCount,
+                    'evidence_format_rule' => $req->evidence_format_rule,
+                    'evidence_format_label' => \App\Models\Requirement::evidenceFormatRuleLabel($req->evidence_format_rule),
+                    'upload_accept' => match ($req->evidence_format_rule) {
+                        \App\Models\Requirement::EVIDENCE_RULE_EXCEL => '.xls,.xlsx,.xlsm,.csv',
+                        \App\Models\Requirement::EVIDENCE_RULE_POWERPOINT => '.ppt,.pptx',
+                        \App\Models\Requirement::EVIDENCE_RULE_KML => '.kml,.kmz,.klm',
+                        \App\Models\Requirement::EVIDENCE_RULE_PROJECT => '.mpp',
+                        \App\Models\Requirement::EVIDENCE_RULE_PDF => '.pdf',
+                        default => '',
+                    },
                     'upload_url' => route('projects.manage.upload', [$project, $req]),
                     'evidences' => $visibleEvidences->map(function ($evidence) {
                         return [
@@ -824,6 +834,10 @@
                                                         x-text="currentRequirement().has_evidence ? `${currentRequirement().valid_evidence_count} evidencia(s)` : 'Sin evidencia'"></span>
                                                 </div>
 
+                                                <div class="text-[11px] text-gray-500">
+                                                    Cuenta como válido: <span class="font-semibold" x-text="currentRequirement().evidence_format_label || 'Sin regla'"></span>
+                                                </div>
+
                                                 <div class="space-y-2">
                                                     <template x-if="(currentRequirement().evidences || []).length === 0">
                                                         <div class="text-xs text-gray-500">No hay evidencias visibles para este requisito.</div>
@@ -859,7 +873,7 @@
                                                     @csrf
                                                     <div>
                                                         <label class="text-xs font-medium text-gray-600">Cargar evidencias</label>
-                                                        <input type="file" name="archivos[]" multiple class="mt-1 block w-full text-xs text-gray-700">
+                                                        <input type="file" name="archivos[]" multiple :accept="currentRequirement().upload_accept || null" class="mt-1 block w-full text-xs text-gray-700">
                                                     </div>
                                                     <button type="submit" class="w-full h-9 rounded-md bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">
                                                         Subir
