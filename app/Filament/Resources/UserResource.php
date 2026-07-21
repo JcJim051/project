@@ -5,9 +5,13 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\UserResource\Pages;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\PlaneProvisioningService;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Form;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -46,6 +50,25 @@ class UserResource extends Resource
                 TextInput::make('documento')
                     ->label('Documento')
                     ->maxLength(100),
+                Placeholder::make('plane_status')
+                    ->label('Estado en Plane')
+                    ->content(fn (?User $record): string => $record ? match ($record->plane_sync_status) {
+                        'linked' => 'Vinculado correctamente',
+                        'invited' => 'Invitación enviada',
+                        'not_found' => 'No encontrado en Plane',
+                        'error' => 'Con novedad de sincronización',
+                        default => 'Pendiente de sincronizar',
+                    } : 'Se resolverá cuando el usuario sea invitado a Plane.'),
+                TextInput::make('plane_user_id')
+                    ->label('Plane user id')
+                    ->disabled()
+                    ->dehydrated(false),
+                Textarea::make('plane_last_error')
+                    ->label('Última novedad Plane')
+                    ->disabled()
+                    ->dehydrated(false)
+                    ->rows(2)
+                    ->columnSpanFull(),
                 TextInput::make('password')
                     ->label('Contrasena')
                     ->password()
@@ -91,6 +114,23 @@ class UserResource extends Resource
                     ->label('Roles')
                     ->badge()
                     ->separator(','),
+                TextColumn::make('plane_sync_status')
+                    ->label('Plane')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state): string => match ($state) {
+                        'linked' => 'Vinculado',
+                        'invited' => 'Invitado',
+                        'not_found' => 'No encontrado',
+                        'error' => 'Con novedad',
+                        default => 'Pendiente',
+                    })
+                    ->color(fn (?string $state): string => match ($state) {
+                        'linked' => 'success',
+                        'invited' => 'warning',
+                        'not_found' => 'warning',
+                        'error' => 'danger',
+                        default => 'gray',
+                    }),
                 TextColumn::make('updated_at')
                     ->label('Actualizado')
                     ->dateTime('Y-m-d H:i')
@@ -102,6 +142,29 @@ class UserResource extends Resource
                     ->label('Rol'),
             ])
             ->actions([
+                Tables\Actions\Action::make('retryPlaneInvitation')
+                    ->label('Reintentar Plane')
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('gray')
+                    ->visible(fn (User $record): bool => $record->hasAnyRole(['formulador', 'estructurador']))
+                    ->action(function (User $record): void {
+                        $result = app(PlaneProvisioningService::class)->inviteUserToWorkspace($record);
+                        $record->refresh();
+
+                        $notification = Notification::make()
+                            ->title($result['success'] ? 'Invitación a Plane procesada' : 'No se pudo procesar la invitación a Plane')
+                            ->body($record->plane_sync_status === 'linked'
+                                ? 'El usuario quedó vinculado correctamente en Plane.'
+                                : ($record->plane_last_error ?: ($result['message'] ?? 'No fue posible sincronizar el usuario con Plane.')));
+
+                        if ($result['success']) {
+                            $notification->success();
+                        } else {
+                            $notification->danger();
+                        }
+
+                        $notification->send();
+                    }),
                 Tables\Actions\EditAction::make(),
             ])
             ->bulkActions([

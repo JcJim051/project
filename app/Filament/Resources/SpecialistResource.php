@@ -40,6 +40,7 @@ class SpecialistResource extends Resource
                 ->label('Estado en Plane')
                 ->content(fn (?Specialist $record): string => $record ? match ($record->plane_sync_status) {
                     'linked' => 'Vinculado correctamente',
+                    'invited' => 'Invitación enviada',
                     'not_found' => 'No encontrado en Plane',
                     'error' => 'Con novedad de sincronización',
                     default => 'Pendiente de sincronizar',
@@ -61,12 +62,14 @@ class SpecialistResource extends Resource
                 ->badge()
                 ->formatStateUsing(fn (?string $state): string => match ($state) {
                     'linked' => 'Vinculado',
+                    'invited' => 'Invitado',
                     'not_found' => 'No encontrado',
                     'error' => 'Con novedad',
                     default => 'Pendiente',
                 })
                 ->color(fn (?string $state): string => match ($state) {
                     'linked' => 'success',
+                    'invited' => 'warning',
                     'not_found' => 'warning',
                     'error' => 'danger',
                     default => 'gray',
@@ -80,7 +83,7 @@ class SpecialistResource extends Resource
                 ->color('gray')
                 ->visible(fn (Specialist $record): bool => $record->activo)
                 ->action(function (Specialist $record): void {
-                    $result = app(PlaneProvisioningService::class)->syncSpecialistsAgainstPlane([$record]);
+                    $result = app(PlaneProvisioningService::class)->inviteSpecialistToWorkspace($record);
                     $record->refresh();
 
                     $notification = Notification::make()

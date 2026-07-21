@@ -15,6 +15,7 @@ use App\Models\Project;
 use App\Models\ProjectPlaneCycle;
 use App\Models\ProjectPlaneLabel;
 use App\Models\Specialist;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -353,6 +354,236 @@ class PlaneProvisioningService
         } catch (\Throwable $e) {
             return [
                 'success' => false,
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
+    public function inviteSpecialistToWorkspace(Specialist $specialist): array
+    {
+        $connection = $this->activeConnection();
+        if (! $connection) {
+            $this->syncSpecialistPlaneReference($specialist, null, '', 'No existe una conexión Plane activa.', 'error');
+
+            return [
+                'success' => false,
+                'status' => 'missing_connection',
+                'message' => 'No existe una conexión Plane activa.',
+            ];
+        }
+
+        $email = $this->entityEmail($specialist);
+        if ($email === '') {
+            $this->syncSpecialistPlaneReference($specialist, null, '', 'El especialista no tiene correo válido para invitarlo a Plane.', 'error');
+
+            return [
+                'success' => false,
+                'status' => 'missing_email',
+                'message' => 'El especialista no tiene correo válido para invitarlo a Plane.',
+            ];
+        }
+
+        try {
+            $request = $this->authorizedRequest($connection);
+            $memberDirectory = $this->planeMemberDirectory($request, $connection);
+            $existingMember = $memberDirectory[$email] ?? null;
+            if ($existingMember) {
+                $this->syncSpecialistPlaneReference($specialist, $existingMember, $email, null, 'linked');
+
+                return [
+                    'success' => true,
+                    'status' => 'linked',
+                    'message' => 'El especialista ya existe como miembro activo del workspace en Plane.',
+                    'plane_user_id' => $existingMember['plane_user_id'] ?? null,
+                ];
+            }
+
+            $response = $this->planeWriteWithRetry(
+                $request,
+                'post',
+                $this->interpolatedUrl($connection, '/api/v1/workspaces/{workspace_slug}/invitations/', $this->baseReplacements($connection)),
+                [
+                    'email' => $email,
+                    'role' => 15,
+                ]
+            );
+
+            if (! $response->successful() && ! in_array($response->status(), [400, 409, 422], true)) {
+                $body = trim((string) $response->body());
+                throw new \RuntimeException(
+                    'Plane respondió con estado ' . $response->status()
+                    . ($body !== '' ? ' · ' . Str::limit($body, 300) : '')
+                );
+            }
+
+            $refreshedDirectory = $this->planeMemberDirectory($request, $connection);
+            $member = $refreshedDirectory[$email] ?? null;
+
+            if ($member) {
+                $this->syncSpecialistPlaneReference($specialist, $member, $email, null, 'linked');
+
+                return [
+                    'success' => true,
+                    'status' => 'linked',
+                    'message' => 'El especialista quedó vinculado correctamente con Plane.',
+                    'plane_user_id' => $member['plane_user_id'] ?? null,
+                ];
+            }
+
+            $message = $response->successful()
+                ? 'La invitación fue creada, pero el especialista aún no figura como miembro activo del workspace en Plane.'
+                : 'El especialista ya existe o ya fue invitado en Plane, pendiente de aceptación o activación.';
+
+            $this->syncSpecialistPlaneReference($specialist, null, $email, $message, 'invited');
+
+            return [
+                'success' => true,
+                'status' => 'invited',
+                'message' => $message,
+            ];
+        } catch (\Throwable $e) {
+            $this->syncSpecialistPlaneReference($specialist, null, $email, $e->getMessage(), 'error');
+
+            return [
+                'success' => false,
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
+    public function inviteUserToWorkspace(User $user): array
+    {
+        $connection = $this->activeConnection();
+        if (! $connection) {
+            $this->syncUserPlaneReference($user, null, 'No existe una conexión Plane activa.', 'error');
+
+            return [
+                'success' => false,
+                'status' => 'missing_connection',
+                'message' => 'No existe una conexión Plane activa.',
+            ];
+        }
+
+        $email = $this->entityEmail($user);
+        if ($email === '') {
+            $this->syncUserPlaneReference($user, null, 'El usuario no tiene correo válido para invitarlo a Plane.', 'error');
+
+            return [
+                'success' => false,
+                'status' => 'missing_email',
+                'message' => 'El usuario no tiene correo válido para invitarlo a Plane.',
+            ];
+        }
+
+        try {
+            $request = $this->authorizedRequest($connection);
+            $memberDirectory = $this->planeMemberDirectory($request, $connection);
+            $existingMember = $memberDirectory[$email] ?? null;
+            if ($existingMember) {
+                $this->syncUserPlaneReference($user, $existingMember, null, 'linked');
+
+                return [
+                    'success' => true,
+                    'status' => 'linked',
+                    'message' => 'El usuario ya existe como miembro activo del workspace en Plane.',
+                    'plane_user_id' => $existingMember['plane_user_id'] ?? null,
+                ];
+            }
+
+            $response = $this->planeWriteWithRetry(
+                $request,
+                'post',
+                $this->interpolatedUrl($connection, '/api/v1/workspaces/{workspace_slug}/invitations/', $this->baseReplacements($connection)),
+                [
+                    'email' => $email,
+                    'role' => 15,
+                ]
+            );
+
+            if (! $response->successful() && ! in_array($response->status(), [400, 409, 422], true)) {
+                $body = trim((string) $response->body());
+                throw new \RuntimeException(
+                    'Plane respondió con estado ' . $response->status()
+                    . ($body !== '' ? ' · ' . Str::limit($body, 300) : '')
+                );
+            }
+
+            $refreshedDirectory = $this->planeMemberDirectory($request, $connection);
+            $member = $refreshedDirectory[$email] ?? null;
+
+            if ($member) {
+                $this->syncUserPlaneReference($user, $member, null, 'linked');
+
+                return [
+                    'success' => true,
+                    'status' => 'linked',
+                    'message' => 'El usuario quedó vinculado correctamente con Plane.',
+                    'plane_user_id' => $member['plane_user_id'] ?? null,
+                ];
+            }
+
+            $message = $response->successful()
+                ? 'La invitación fue creada, pero el usuario aún no figura como miembro activo del workspace en Plane.'
+                : ('El usuario ya existe o ya fue invitado en Plane, pendiente de aceptación o activación.');
+
+            $this->syncUserPlaneReference($user, null, $message, 'invited');
+
+            return [
+                'success' => true,
+                'status' => 'invited',
+                'message' => $message,
+            ];
+        } catch (\Throwable $e) {
+            $this->syncUserPlaneReference($user, null, $e->getMessage(), 'error');
+
+            return [
+                'success' => false,
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
+    public function syncUsersAgainstPlane(iterable $users): array
+    {
+        $connection = $this->activeConnection();
+        if (! $connection) {
+            return [
+                'success' => false,
+                'status' => 'missing_connection',
+                'message' => 'No existe una conexión Plane activa.',
+            ];
+        }
+
+        try {
+            $directory = $this->planeMemberDirectory($this->authorizedRequest($connection), $connection);
+
+            foreach ($users as $user) {
+                if (! $user instanceof User) {
+                    continue;
+                }
+
+                $fresh = $user->fresh() ?? $user;
+                $email = $this->entityEmail($fresh);
+                $planeMember = $email !== '' ? ($directory[$email] ?? null) : null;
+                $message = $email === ''
+                    ? 'El usuario no tiene correo válido para buscarlo en Plane.'
+                    : ($planeMember ? null : 'No se encontró el usuario como miembro activo del workspace en Plane.');
+                $status = $planeMember ? 'linked' : ($email === '' ? 'error' : 'not_found');
+
+                $this->syncUserPlaneReference($fresh, $planeMember, $message, $status);
+            }
+
+            return [
+                'success' => true,
+                'status' => 'synced',
+                'message' => 'Usuarios sincronizados contra Plane.',
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'success' => false,
+                'status' => 'error',
                 'message' => $e->getMessage(),
             ];
         }
@@ -2212,12 +2443,28 @@ class PlaneProvisioningService
         return Str::lower(trim((string) ($entity->email ?? $entity->correo ?? '')));
     }
 
-    private function syncSpecialistPlaneReference(Specialist $specialist, ?array $planeAssignee, string $email): void
+    private function syncUserPlaneReference(User $user, ?array $planeMember, ?string $message, string $status): void
+    {
+        $user->forceFill([
+            'plane_user_id' => $planeMember['plane_user_id'] ?? ($status === 'linked' ? $user->plane_user_id : null),
+            'plane_sync_status' => $status,
+            'plane_last_error' => $message,
+            'plane_last_synced_at' => now(),
+        ])->save();
+    }
+
+    private function syncSpecialistPlaneReference(
+        Specialist $specialist,
+        ?array $planeAssignee,
+        string $email,
+        ?string $customMessage = null,
+        ?string $forcedStatus = null
+    ): void
     {
         if ($email === '') {
             $specialist->forceFill([
-                'plane_sync_status' => 'error',
-                'plane_last_error' => 'El especialista no tiene correo válido para buscarlo en Plane.',
+                'plane_sync_status' => $forcedStatus ?: 'error',
+                'plane_last_error' => $customMessage ?: 'El especialista no tiene correo válido para buscarlo en Plane.',
                 'plane_last_synced_at' => now(),
             ])->save();
             return;
@@ -2226,16 +2473,16 @@ class PlaneProvisioningService
         if ($planeAssignee) {
             $specialist->forceFill([
                 'plane_user_id' => $planeAssignee['plane_user_id'],
-                'plane_sync_status' => 'linked',
-                'plane_last_error' => null,
+                'plane_sync_status' => $forcedStatus ?: 'linked',
+                'plane_last_error' => $customMessage,
                 'plane_last_synced_at' => now(),
             ])->save();
             return;
         }
 
         $specialist->forceFill([
-            'plane_sync_status' => 'not_found',
-            'plane_last_error' => 'No se encontró el especialista como miembro activo del workspace en Plane.',
+            'plane_sync_status' => $forcedStatus ?: 'not_found',
+            'plane_last_error' => $customMessage ?: 'No se encontró el especialista como miembro activo del workspace en Plane.',
             'plane_last_synced_at' => now(),
         ])->save();
     }

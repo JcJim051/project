@@ -33,6 +33,10 @@ class User extends Authenticatable implements HasAvatar
         'password',
         'is_admin',
         'must_change_password',
+        'plane_user_id',
+        'plane_sync_status',
+        'plane_last_synced_at',
+        'plane_last_error',
     ];
 
     /**
@@ -56,6 +60,7 @@ class User extends Authenticatable implements HasAvatar
         'email_verified_at' => 'datetime',
         'is_admin' => 'boolean',
         'must_change_password' => 'boolean',
+        'plane_last_synced_at' => 'datetime',
     ];
 
     /**

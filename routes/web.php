@@ -14,6 +14,7 @@ use App\Http\Controllers\ProjectBankController;
 use App\Http\Controllers\AttachmentPackageRunController;
 use App\Http\Controllers\MeetingAttendancePublicController;
 use App\Http\Controllers\MeetingAttendanceSessionController;
+use App\Http\Controllers\TeamOnboardingPublicController;
 use App\Http\Controllers\ProjectTransferRequestController;
 use App\Http\Controllers\ProjectTransferReviewController;
 use App\Http\Controllers\RequirementEvidencePreviewController;
@@ -42,6 +43,9 @@ Route::get('/attendance/{token}/summary', [MeetingAttendancePublicController::cl
 Route::get('/attendance/{token}/download/xlsx', [MeetingAttendancePublicController::class, 'downloadXlsx'])->name('attendance.download.xlsx');
 Route::get('/attendance/{token}/download/pdf', [MeetingAttendancePublicController::class, 'downloadPdf'])->name('attendance.download.pdf');
 Route::post('/attendance/{token}', [MeetingAttendancePublicController::class, 'submit'])->name('attendance.submit');
+Route::get('/team-onboarding/{token}', [TeamOnboardingPublicController::class, 'showCampaign'])->name('team-onboarding.campaign');
+Route::get('/team-onboarding/{token}/register', [TeamOnboardingPublicController::class, 'showRegister'])->name('team-onboarding.register');
+Route::post('/team-onboarding/{token}', [TeamOnboardingPublicController::class, 'submit'])->name('team-onboarding.submit');
 
 Route::middleware([
     'auth',
