@@ -12,6 +12,8 @@ use App\Http\Controllers\ProjectDocumentController;
 use App\Http\Controllers\ProjectDriveEvidenceController;
 use App\Http\Controllers\ProjectBankController;
 use App\Http\Controllers\AttachmentPackageRunController;
+use App\Http\Controllers\MeetingAttendancePublicController;
+use App\Http\Controllers\MeetingAttendanceSessionController;
 use App\Http\Controllers\ProjectTransferRequestController;
 use App\Http\Controllers\ProjectTransferReviewController;
 use App\Http\Controllers\RequirementEvidencePreviewController;
@@ -33,6 +35,13 @@ Route::get('/preview/email-welcome', function () {
 Route::middleware('guest')->get('/login', function () {
     return redirect('/panel/login');
 });
+
+Route::get('/attendance/{token}', [MeetingAttendancePublicController::class, 'showSession'])->name('attendance.session');
+Route::get('/attendance/{token}/register', [MeetingAttendancePublicController::class, 'showRegister'])->name('attendance.register');
+Route::get('/attendance/{token}/summary', [MeetingAttendancePublicController::class, 'summary'])->name('attendance.summary');
+Route::get('/attendance/{token}/download/xlsx', [MeetingAttendancePublicController::class, 'downloadXlsx'])->name('attendance.download.xlsx');
+Route::get('/attendance/{token}/download/pdf', [MeetingAttendancePublicController::class, 'downloadPdf'])->name('attendance.download.pdf');
+Route::post('/attendance/{token}', [MeetingAttendancePublicController::class, 'submit'])->name('attendance.submit');
 
 Route::middleware([
     'auth',
@@ -80,6 +89,7 @@ Route::middleware([
     Route::get('/projects/{project}/attachments-pdf/runs', [AttachmentPackageRunController::class, 'index'])->name('projects.attachments.runs.index');
     Route::post('/projects/{project}/attachments-pdf/runs', [AttachmentPackageRunController::class, 'store'])->name('projects.attachments.runs.store');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}', [AttachmentPackageRunController::class, 'show'])->name('projects.attachments.runs.show');
+    Route::post('/projects/{project}/attachments-pdf/runs/{run}/cancel', [AttachmentPackageRunController::class, 'cancel'])->name('projects.attachments.runs.cancel');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}/preview', [AttachmentPackageRunController::class, 'preview'])->name('projects.attachments.runs.preview');
     Route::get('/projects/{project}/attachments-pdf/runs/{run}/download', [AttachmentPackageRunController::class, 'download'])->name('projects.attachments.runs.download');
     Route::get('/requirement-evidences/{evidence}/preview', [RequirementEvidencePreviewController::class, 'show'])->name('requirement-evidences.preview');
@@ -96,6 +106,9 @@ Route::middleware([
     Route::get('/projects/{project}/documents', [ProjectDocumentController::class, 'index'])->name('projects.documents');
     Route::get('/projects/{project}/documents/{documentTemplate}', [ProjectDocumentController::class, 'download'])->name('projects.documents.download');
     Route::post('/projects/{project}/documents/zip', [ProjectDocumentController::class, 'downloadZip'])->name('projects.documents.zip');
+    Route::get('/meeting-attendance-sessions/{session}/summary', [MeetingAttendanceSessionController::class, 'summary'])->name('attendance.sessions.summary');
+    Route::get('/meeting-attendance-sessions/{session}/download/xlsx', [MeetingAttendanceSessionController::class, 'downloadXlsx'])->name('attendance.sessions.download.xlsx');
+    Route::get('/meeting-attendance-sessions/{session}/download/pdf', [MeetingAttendanceSessionController::class, 'downloadPdf'])->name('attendance.sessions.download.pdf');
     Route::put('/projects/{project}/bank/profile', [ProjectBankController::class, 'updateProfile'])->name('projects.bank.profile.update');
     Route::put('/projects/{project}/bank/signatories', [ProjectBankController::class, 'updateSignatories'])->name('projects.bank.signatories.update');
     Route::put('/projects/{project}/bank/financing', [ProjectBankController::class, 'updateFinancingRows'])->name('projects.bank.financing.update');

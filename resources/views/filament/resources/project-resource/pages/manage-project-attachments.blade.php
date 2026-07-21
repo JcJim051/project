@@ -65,6 +65,26 @@
                 <div class="mt-3 rounded-md bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{{ $message }}</div>
             @enderror
 
+            <div class="mt-4 rounded-md border border-amber-100 bg-amber-50 p-3">
+                <div class="text-xs font-semibold text-amber-900">Versión de salida</div>
+                <div class="mt-2 grid gap-2 md:grid-cols-2">
+                    <label class="flex items-start gap-2 rounded-md border border-amber-200 bg-white px-3 py-2 text-xs text-gray-700">
+                        <input type="radio" name="version_mode" value="next" checked class="mt-0.5 border-gray-300 text-amber-600 focus:ring-amber-500">
+                        <span>
+                            <span class="block font-semibold text-gray-800">Generar siguiente versión</span>
+                            <span class="block text-[11px] text-gray-500">Usa el siguiente número disponible en Drive. Recomendado para entregas finales.</span>
+                        </span>
+                    </label>
+                    <label class="flex items-start gap-2 rounded-md border border-amber-200 bg-white px-3 py-2 text-xs text-gray-700">
+                        <input type="radio" name="version_mode" value="current" class="mt-0.5 border-gray-300 text-amber-600 focus:ring-amber-500">
+                        <span>
+                            <span class="block font-semibold text-gray-800">Mantener versión actual</span>
+                            <span class="block text-[11px] text-gray-500">Conserva el número V actual para pruebas y correcciones de la misma entrega.</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+
             <div class="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                 @foreach ($availableAttachmentDocuments as $document)
                     <label class="flex items-start gap-2 rounded-md border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-700 hover:border-amber-300 hover:bg-amber-50">
@@ -148,8 +168,10 @@
                                 @endif
                             </div>
                             <div class="flex items-center gap-2">
+                                @php($hasDriveOutput = filled($run->drive_file_id) && $run->status === 'success')
                                 @php($downloadPath = $run->output_local_path ?: $run->zip_local_path)
-                                @if ($downloadPath && file_exists($downloadPath))
+                                @php($hasLegacyLocalOutput = $downloadPath && file_exists($downloadPath))
+                                @if ($hasDriveOutput || $hasLegacyLocalOutput)
                                     @if (($run->output_type ?: 'zip') === 'pdf')
                                         <a href="{{ route('projects.attachments.runs.preview', [$project, $run]) }}" target="_blank" class="text-xs font-semibold text-emerald-700 hover:text-emerald-800">
                                             Ver PDF
@@ -161,6 +183,14 @@
                                 @endif
                                 @if ($run->error_message)
                                     <span class="text-xs text-rose-600">{{ $run->error_message }}</span>
+                                @endif
+                                @if (in_array($run->status, ['pending', 'running'], true))
+                                    <form method="POST" action="{{ route('projects.attachments.runs.cancel', [$project, $run]) }}">
+                                        @csrf
+                                        <button type="submit" class="text-xs font-semibold text-rose-600 hover:text-rose-700">
+                                            Cancelar
+                                        </button>
+                                    </form>
                                 @endif
                             </div>
                         </div>
@@ -197,6 +227,19 @@
                     <p class="mt-2 text-[11px] text-gray-500" data-attachment-progress-detail>
                         Run #{{ $activeAttachmentRun->id }} · Estado: {{ $activeAttachmentRun->status }}
                     </p>
+                    @if (data_get($activeAttachmentRun->meta, 'drive_download_file_name'))
+                        <p class="mt-1 text-[11px] text-amber-700" data-attachment-progress-file>
+                            Archivo actual: {{ data_get($activeAttachmentRun->meta, 'drive_download_file_name') }}
+                        </p>
+                    @else
+                        <p class="mt-1 hidden text-[11px] text-amber-700" data-attachment-progress-file></p>
+                    @endif
+                    <form method="POST" action="{{ route('projects.attachments.runs.cancel', [$project, $activeAttachmentRun]) }}" class="mt-4">
+                        @csrf
+                        <button type="submit" data-attachment-progress-cancel class="rounded-md border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50">
+                            Cancelar generación
+                        </button>
+                    </form>
                 </div>
             </div>
         </div>
@@ -228,16 +271,18 @@
         @if ($activeAttachmentRunUrl)
             (function () {
                 const statusUrl = @json($activeAttachmentRunUrl);
+                const cancelUrl = @json(route('projects.attachments.runs.cancel', [$project, $activeAttachmentRun]));
                 const runId = @json($activeAttachmentRun->id);
                 const modal = document.querySelector('[data-attachment-progress-modal]');
                 const modalBar = document.querySelector('[data-attachment-progress-bar]');
                 const modalStage = document.querySelector('[data-attachment-progress-stage]');
                 const modalPercent = document.querySelector('[data-attachment-progress-percent]');
                 const modalDetail = document.querySelector('[data-attachment-progress-detail]');
+                const modalFile = document.querySelector('[data-attachment-progress-file]');
                 const listBar = document.querySelector('[data-run-progress-bar="' + runId + '"]');
                 const listLabel = document.querySelector('[data-run-progress-label="' + runId + '"]');
 
-                function setProgress(percent, stage, detailPercent, status) {
+                function setProgress(percent, stage, detailPercent, status, fileName) {
                     percent = Math.max(0, Math.min(100, parseInt(percent || 0, 10)));
                     if (modalBar) modalBar.style.width = percent + '%';
                     if (modalStage) modalStage.textContent = stage || 'Procesando';
@@ -245,17 +290,42 @@
                     if (modalDetail) {
                         modalDetail.textContent = 'Run #' + runId + ' · Estado: ' + status + (detailPercent !== null && detailPercent !== undefined ? ' · Etapa actual: ' + detailPercent + '%' : '');
                     }
+                    if (modalFile) {
+                        modalFile.textContent = fileName ? ('Archivo actual: ' + fileName) : '';
+                        modalFile.classList.toggle('hidden', !fileName);
+                    }
                     if (listBar) listBar.style.width = percent + '%';
                     if (listLabel) listLabel.textContent = percent + '% total';
                 }
+
+                document.addEventListener('click', async function (event) {
+                    const button = event.target.closest('[data-attachment-progress-cancel]');
+                    if (!button) return;
+
+                    event.preventDefault();
+                    button.disabled = true;
+                    button.textContent = 'Cancelando...';
+
+                    try {
+                        await fetch(cancelUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': @json(csrf_token()),
+                            },
+                        });
+                    } finally {
+                        window.location.reload();
+                    }
+                });
 
                 async function poll() {
                     try {
                         const response = await fetch(statusUrl, { headers: { 'Accept': 'application/json' } });
                         if (!response.ok) return;
                         const data = await response.json();
-                        setProgress(data.stage_percent || (data.status === 'running' ? 5 : 1), data.stage_label, data.stage_detail_percent, data.status);
-                        if (data.status === 'success' || data.status === 'failed') {
+                        setProgress(data.stage_percent || (data.status === 'running' ? 5 : 1), data.stage_label, data.stage_detail_percent, data.status, data.drive_download_file_name);
+                        if (data.status === 'success' || data.status === 'failed' || data.status === 'cancelled') {
                             setTimeout(function () { window.location.reload(); }, 1500);
                             return;
                         }

@@ -16,10 +16,12 @@ class AttachmentPackageSection extends Model
         'active',
         'source_group_code',
         'source_folder',
+        'recursive_root_folder',
         'match_type',
         'code_prefixes',
         'allowed_extensions',
         'include_all_folder_files',
+        'recursive_source_folders',
     ];
 
     protected $casts = [
@@ -28,6 +30,7 @@ class AttachmentPackageSection extends Model
         'code_prefixes' => 'array',
         'allowed_extensions' => 'array',
         'include_all_folder_files' => 'boolean',
+        'recursive_source_folders' => 'array',
     ];
 
     public function parent()

@@ -43,6 +43,9 @@ class UserResource extends Resource
                     ->required()
                     ->unique(ignoreRecord: true)
                     ->maxLength(255),
+                TextInput::make('documento')
+                    ->label('Documento')
+                    ->maxLength(100),
                 TextInput::make('password')
                     ->label('Contrasena')
                     ->password()
@@ -81,6 +84,9 @@ class UserResource extends Resource
                     ->label('Email')
                     ->searchable()
                     ->sortable(),
+                TextColumn::make('documento')
+                    ->label('Documento')
+                    ->searchable(),
                 TextColumn::make('roles.name')
                     ->label('Roles')
                     ->badge()

@@ -413,6 +413,91 @@ class GoogleDriveService
         ];
     }
 
+    public function listProjectSubfolderFiles(
+        Project $project,
+        string $rootFolderName,
+        array $subfolderNames = [],
+        ?int $userId = null,
+        ?string $extension = null
+    ): array {
+        $rootFolderName = trim($rootFolderName);
+        if ($rootFolderName === '') {
+            return [
+                'folder_label' => '',
+                'items' => collect(),
+                'total' => 0,
+                'resolved_folders' => [],
+                'missing_folders' => [],
+            ];
+        }
+
+        $rootFolderId = $this->resolvedStandardRequirementFolder($project, $rootFolderName, $userId, false);
+        if (!$rootFolderId) {
+            return [
+                'folder_label' => $rootFolderName,
+                'items' => collect(),
+                'total' => 0,
+                'resolved_folders' => [],
+                'missing_folders' => $subfolderNames,
+            ];
+        }
+
+        $targets = collect($subfolderNames)
+            ->map(fn ($name) => trim((string) $name))
+            ->filter()
+            ->unique(fn ($name) => $this->normalizeFolderName($name))
+            ->values();
+
+        $resolvedFolders = [];
+        $missingFolders = [];
+        $items = collect();
+
+        if ($targets->isEmpty()) {
+            $items = $this->listFilesRecursively($rootFolderId, $userId);
+            $resolvedFolders[] = [
+                'name' => $rootFolderName,
+                'id' => $rootFolderId,
+            ];
+        } else {
+            foreach ($targets as $targetName) {
+                $subfolderId = $this->cachedChildFolderId($project, $rootFolderId, $targetName, $userId, false);
+                if (!$subfolderId) {
+                    $missingFolders[] = $targetName;
+                    continue;
+                }
+
+                $resolvedFolders[] = [
+                    'name' => $targetName,
+                    'id' => $subfolderId,
+                ];
+
+                $folderItems = $this->listFilesRecursively($subfolderId, $userId)
+                    ->map(function (array $file) use ($targetName) {
+                        $file['matched_subfolder'] = $targetName;
+                        return $file;
+                    });
+
+                $items = $items->merge($folderItems);
+            }
+        }
+
+        if ($extension !== null && trim($extension) !== '') {
+            $ext = Str::lower(ltrim(trim($extension), '.'));
+            $items = $items->filter(function (array $file) use ($ext) {
+                $name = Str::lower((string) ($file['name'] ?? ''));
+                return Str::endsWith($name, '.' . $ext);
+            })->values();
+        }
+
+        return [
+            'folder_label' => $rootFolderName,
+            'items' => $items->unique('id')->values(),
+            'total' => $items->unique('id')->count(),
+            'resolved_folders' => $resolvedFolders,
+            'missing_folders' => $missingFolders,
+        ];
+    }
+
     public function getDriveFileMeta(string $fileId, ?int $userId = null): array
     {
         $drive = $this->drive($userId);
@@ -538,6 +623,16 @@ class GoogleDriveService
                 return;
             } catch (\Throwable $e) {
                 $lastException = $e;
+                if ($this->isGoogleWorkspaceDownloadError($e)) {
+                    try {
+                        $this->exportGoogleWorkspaceFile($fileId, $destinationPath, $userId);
+                        return;
+                    } catch (\Throwable $exportException) {
+                        $lastException = $exportException;
+                        break;
+                    }
+                }
+
                 if ($attempt >= $retries || !$this->isRetryableDriveError($e)) {
                     break;
                 }
@@ -546,6 +641,37 @@ class GoogleDriveService
         }
 
         throw $lastException ?: new \RuntimeException('No se pudo descargar archivo desde Drive.');
+    }
+
+    private function isGoogleWorkspaceDownloadError(\Throwable $e): bool
+    {
+        return str_contains($e->getMessage(), 'fileNotDownloadable')
+            || str_contains($e->getMessage(), 'Only files with binary content can be downloaded');
+    }
+
+    private function exportGoogleWorkspaceFile(string $fileId, string $destinationPath, ?int $userId = null): void
+    {
+        $drive = $this->drive($userId);
+        $meta = $this->getDriveFileMeta($fileId, $userId);
+        $exportMimeType = $this->workspaceExportMimeType((string) ($meta['mimeType'] ?? ''));
+
+        if ($exportMimeType === null) {
+            throw new \RuntimeException('El archivo de Google Workspace no tiene formato de exportacion soportado: ' . (string) ($meta['mimeType'] ?? 'desconocido'));
+        }
+
+        $response = $drive->files->export($fileId, $exportMimeType, ['alt' => 'media']);
+        file_put_contents($destinationPath, $response->getBody()->getContents());
+    }
+
+    private function workspaceExportMimeType(string $mimeType): ?string
+    {
+        return match ($mimeType) {
+            'application/vnd.google-apps.spreadsheet' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.google-apps.document' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.google-apps.presentation' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.google-apps.drawing' => 'application/pdf',
+            default => null,
+        };
     }
 
     public function uploadRawToFolder(string $folderId, string $fileName, string $content, string $mimeType = 'application/octet-stream', ?int $userId = null): array
@@ -725,7 +851,7 @@ class GoogleDriveService
         }
     }
 
-    private function client(?int $userId = null): Client
+    private function client(?int $userId = null, bool $requireToken = false): Client
     {
         $oauth = $this->oauthCredentials();
 
@@ -746,22 +872,38 @@ class GoogleDriveService
         ]));
 
         $token = $this->loadToken($userId);
-        if ($token) {
-            $client->setAccessToken($token);
-            if ($client->isAccessTokenExpired()) {
-                $refreshToken = $client->getRefreshToken() ?: ($token['refresh_token'] ?? null);
-                if ($refreshToken) {
-                    try {
-                        $refreshedToken = $client->fetchAccessTokenWithRefreshToken($refreshToken);
-                        if (!isset($refreshedToken['refresh_token']) && $refreshToken) {
-                            $refreshedToken['refresh_token'] = $refreshToken;
-                        }
-                        $this->storeToken($refreshedToken, $userId);
-                    } catch (\Throwable $e) {
-                        $this->forgetToken($userId);
-                        throw new \RuntimeException('Token de Google expirado o revocado. Reconecta Drive.', 0, $e);
-                    }
+        if (!$token) {
+            if ($requireToken) {
+                throw new \RuntimeException('Drive no esta conectado. Reconecta Drive OAuth antes de consultar o descargar archivos.');
+            }
+
+            return $client;
+        }
+
+        $client->setAccessToken($token);
+        if ($client->isAccessTokenExpired()) {
+            $refreshToken = $client->getRefreshToken() ?: ($token['refresh_token'] ?? null);
+            if (!$refreshToken) {
+                $this->forgetToken($userId);
+                throw new \RuntimeException('Token de Google expirado y sin refresh_token. Reconecta Drive OAuth.');
+            }
+
+            try {
+                $refreshedToken = $client->fetchAccessTokenWithRefreshToken($refreshToken);
+                if (isset($refreshedToken['error'])) {
+                    $description = (string) ($refreshedToken['error_description'] ?? $refreshedToken['error']);
+                    throw new \RuntimeException($description);
                 }
+
+                if (!isset($refreshedToken['refresh_token']) && $refreshToken) {
+                    $refreshedToken['refresh_token'] = $refreshToken;
+                }
+
+                $this->storeToken($refreshedToken, $userId);
+                $client->setAccessToken($refreshedToken);
+            } catch (\Throwable $e) {
+                $this->forgetToken($userId);
+                throw new \RuntimeException('Token de Google expirado o revocado. Reconecta Drive OAuth.', 0, $e);
             }
         }
 
@@ -770,7 +912,7 @@ class GoogleDriveService
 
     private function drive(?int $userId = null): Drive
     {
-        return new Drive($this->client($userId));
+        return new Drive($this->client($userId, true));
     }
 
     public function forgetCredentialCache(): void

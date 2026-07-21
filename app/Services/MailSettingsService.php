@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\MailSetting;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Schema;
 
 class MailSettingsService
@@ -25,10 +27,10 @@ class MailSettingsService
             return [
                 'host' => (string) ($setting->host ?? ''),
                 'port' => (int) ($setting->port ?? 0),
-                'username' => (string) ($setting->username ?? ''),
-                'password' => (string) ($setting->password ?? ''),
+                'username' => $this->safeEncryptedValue($setting, 'username'),
+                'password' => $this->safeEncryptedValue($setting, 'password'),
                 'encryption' => (string) ($setting->encryption ?? ''),
-                'from_address' => (string) ($setting->from_address ?? ''),
+                'from_address' => $this->safeEncryptedValue($setting, 'from_address'),
                 'from_name' => (string) ($setting->from_name ?? ''),
                 'ehlo_domain' => (string) ($setting->ehlo_domain ?? ''),
             ];
@@ -73,6 +75,22 @@ class MailSettingsService
     public function clearCache(): void
     {
         Cache::forget(self::CACHE_KEY);
+    }
+
+    private function safeEncryptedValue(MailSetting $setting, string $key): string
+    {
+        $raw = $setting->getRawOriginal($key);
+        if (blank($raw)) {
+            return '';
+        }
+
+        try {
+            return (string) Crypt::decryptString((string) $raw);
+        } catch (DecryptException) {
+            return '';
+        } catch (\Throwable) {
+            return '';
+        }
     }
 
     private function tableAvailable(): bool

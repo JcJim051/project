@@ -1280,6 +1280,25 @@
                     if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
                     return `${n} B`;
                 },
+                normalizeUploadMimeType(file) {
+                    const name = String(file?.name || '').toLowerCase();
+                    const detected = String(file?.type || '').toLowerCase();
+
+                    if (name.endsWith('.xlsx')) {
+                        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                    }
+                    if (name.endsWith('.xls')) {
+                        return 'application/vnd.ms-excel';
+                    }
+                    if (name.endsWith('.xlsm')) {
+                        return 'application/vnd.ms-excel.sheet.macroenabled.12';
+                    }
+                    if (name.endsWith('.csv')) {
+                        return 'text/csv';
+                    }
+
+                    return detected || 'application/octet-stream';
+                },
                 enqueueCurrentRequirement(event) {
                     const req = this.currentRequirement();
                     if (!req) return;
@@ -1300,7 +1319,7 @@
                         file,
                         name: file.name,
                         size: file.size,
-                        mime_type: file.type || 'application/octet-stream',
+                        mime_type: this.normalizeUploadMimeType(file),
                         index: 1,
                         total: 1,
                         status: 'pending',

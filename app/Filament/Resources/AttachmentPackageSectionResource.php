@@ -64,6 +64,10 @@ class AttachmentPackageSectionResource extends Resource
                     ->label('Carpeta origen')
                     ->helperText('Ej: 3.3 Otras Certificaciones')
                     ->maxLength(255),
+                TextInput::make('recursive_root_folder')
+                    ->label('Carpeta raíz para PDFs recursivos')
+                    ->helperText('Opcional. Ej: 02 Presupuesto o 01 Formulacion')
+                    ->maxLength(255),
                 TagsInput::make('code_prefixes')
                     ->label('Códigos iniciales')
                     ->helperText('Ej: 1.01, 1.06, 1.13')
@@ -71,6 +75,10 @@ class AttachmentPackageSectionResource extends Resource
                 TagsInput::make('allowed_extensions')
                     ->label('Extensiones permitidas')
                     ->helperText('Opcional. Ej: pdf, docx, xlsx')
+                    ->separator(','),
+                TagsInput::make('recursive_source_folders')
+                    ->label('Subcarpetas para consolidación recursiva')
+                    ->helperText('Opcional. Si defines subcarpetas, se incluirán todos los archivos permitidos encontrados dentro de ellas.')
                     ->separator(','),
             ]),
         ]);
@@ -87,7 +95,11 @@ class AttachmentPackageSectionResource extends Resource
                 TextColumn::make('match_type')->label('Regla')->badge(),
                 TextColumn::make('source_group_code')->label('Código'),
                 TextColumn::make('source_folder')->label('Carpeta')->searchable()->wrap(),
+                TextColumn::make('recursive_root_folder')->label('Raíz recursiva')->wrap(),
                 IconColumn::make('include_all_folder_files')->label('Todos')->boolean(),
+                IconColumn::make('recursive_source_folders')
+                    ->label('Recursivo')
+                    ->boolean(fn (AttachmentPackageSection $record): bool => !empty($record->recursive_source_folders)),
                 IconColumn::make('active')->label('Activo')->boolean(),
             ])
             ->actions([

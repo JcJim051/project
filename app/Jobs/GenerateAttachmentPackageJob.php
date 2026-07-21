@@ -50,6 +50,10 @@ class GenerateAttachmentPackageJob implements ShouldQueue
 
         try {
             $service->generateAndUpload($run);
+            $run->refresh();
+            if ($run->status === 'cancelled') {
+                return;
+            }
             $run->update([
                 'status' => 'success',
                 'finished_at' => now(),
@@ -70,6 +74,10 @@ class GenerateAttachmentPackageJob implements ShouldQueue
                 ]));
             }
         } catch (\Throwable $e) {
+            $run->refresh();
+            if ($run->status === 'cancelled') {
+                return;
+            }
             $run->update([
                 'status' => 'failed',
                 'error_message' => $e->getMessage(),

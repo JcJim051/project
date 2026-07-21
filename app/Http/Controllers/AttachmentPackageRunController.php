@@ -7,9 +7,12 @@ use App\Models\AttachmentPackageRun;
 use App\Models\Project;
 use App\Models\RequirementEvidence;
 use App\Services\AttachmentPackageService;
+use App\Services\GoogleDriveService;
 use App\Services\MgaTransferAuthorizationService;
 use App\Services\RequirementProgressService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class AttachmentPackageRunController extends Controller
 {
@@ -95,6 +98,8 @@ class AttachmentPackageRunController extends Controller
             ]);
         }
 
+        $versionMode = $request->input('version_mode') === 'current' ? 'current' : 'next';
+
         $project->forceFill(['attachment_package_selection' => $selected])->save();
 
         $run = AttachmentPackageRun::query()->create([
@@ -104,6 +109,9 @@ class AttachmentPackageRunController extends Controller
             'progress_percent_snapshot' => $percent,
             'selected_documents' => $selected,
             'output_type' => count($selected) === 1 ? 'pdf' : 'zip',
+            'meta' => [
+                'version_mode' => $versionMode,
+            ],
         ]);
 
         GenerateAttachmentPackageJob::dispatch($run->id)->onConnection('database');
@@ -122,7 +130,7 @@ class AttachmentPackageRunController extends Controller
             'status' => $run->status,
             'version_number' => $run->version_number,
             'zip_filename' => $run->zip_filename,
-            'zip_available_local' => $this->runLocalPath($run) && file_exists($this->runLocalPath($run)),
+            'zip_available_local' => $this->hasAccessibleOutput($run),
             'output_type' => $run->output_type ?: 'zip',
             'output_filename' => $run->output_filename ?: $run->zip_filename,
             'generated_pdf_count' => $run->generated_pdf_count,
@@ -131,41 +139,140 @@ class AttachmentPackageRunController extends Controller
             'stage_percent' => data_get($run->meta, 'stage_percent'),
             'stage_detail_percent' => data_get($run->meta, 'stage_detail_percent'),
             'heartbeat_at' => data_get($run->meta, 'heartbeat_at'),
+            'drive_download_file_name' => data_get($run->meta, 'drive_download_file_name'),
+            'drive_download_file_id' => data_get($run->meta, 'drive_download_file_id'),
+            'drive_download_started_at' => data_get($run->meta, 'drive_download_started_at'),
             'error_message' => $run->error_message,
             'updated_at' => optional($run->updated_at)->toDateTimeString(),
         ]);
+    }
+
+    public function cancel(Project $project, AttachmentPackageRun $run)
+    {
+        $this->authorizeProjectMutation();
+        abort_unless($run->project_id === $project->id, 404);
+
+        if (in_array($run->status, ['pending', 'running'], true)) {
+            $meta = is_array($run->meta) ? $run->meta : [];
+            $meta['stage_label'] = 'Cancelado por el usuario';
+            $meta['stage_percent'] = 100;
+            $meta['stage_detail_percent'] = 100;
+            $meta['heartbeat_at'] = now()->toDateTimeString();
+            $meta['cancelled_at'] = now()->toDateTimeString();
+
+            $run->forceFill([
+                'status' => 'cancelled',
+                'error_message' => 'Generación cancelada por el usuario.',
+                'finished_at' => now(),
+                'meta' => $meta,
+            ])->save();
+
+            DB::table('jobs')
+                ->where('queue', 'default')
+                ->where('payload', 'like', '%GenerateAttachmentPackageJob%')
+                ->where('payload', 'like', '%runId%' . $run->id . '%')
+                ->delete();
+        }
+
+        if (request()->expectsJson()) {
+            return response()->json([
+                'id' => $run->id,
+                'status' => $run->fresh()->status,
+            ]);
+        }
+
+        return back()->with('status', 'Generación cancelada.');
     }
 
     public function preview(Project $project, AttachmentPackageRun $run)
     {
         abort_unless($run->project_id === $project->id, 404);
         abort_unless(($run->output_type ?: 'zip') === 'pdf', 404);
-        $path = $this->runLocalPath($run);
-        abort_unless($path && file_exists($path), 404);
+        $path = $this->resolveRunAccessPath($run);
+        abort_unless($path, 404);
 
         $filename = $run->output_filename ?: basename($path);
 
         return response()->file($path, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="' . addslashes($filename) . '"',
-        ]);
+        ])->deleteFileAfterSend($this->shouldDeleteAfterSend($run, $path));
     }
 
     public function download(Project $project, AttachmentPackageRun $run)
     {
         abort_unless($run->project_id === $project->id, 404);
-        $path = $this->runLocalPath($run);
-        abort_unless($path && file_exists($path), 404);
+        $path = $this->resolveRunAccessPath($run);
+        abort_unless($path, 404);
 
         return response()->download(
             $path,
             $run->output_filename ?: $run->zip_filename ?: ('Adjuntos_V' . ($run->version_number ?? 1) . '.zip')
-        );
+        )->deleteFileAfterSend($this->shouldDeleteAfterSend($run, $path));
     }
 
     private function runLocalPath(AttachmentPackageRun $run): ?string
     {
         return $run->output_local_path ?: $run->zip_local_path;
+    }
+
+    private function hasAccessibleOutput(AttachmentPackageRun $run): bool
+    {
+        if ($run->drive_file_id) {
+            return true;
+        }
+
+        $path = $this->runLocalPath($run);
+
+        return $path && file_exists($path);
+    }
+
+    private function resolveRunAccessPath(AttachmentPackageRun $run): ?string
+    {
+        if ($run->drive_file_id) {
+            return $this->downloadRunFromDrive($run);
+        }
+
+        $path = $this->runLocalPath($run);
+
+        return $path && file_exists($path) ? $path : null;
+    }
+
+    private function downloadRunFromDrive(AttachmentPackageRun $run): ?string
+    {
+        if (!$run->drive_file_id) {
+            return null;
+        }
+
+        $baseName = $run->output_filename ?: $run->zip_filename ?: ('adjuntos_v' . ($run->version_number ?? 1));
+        $extension = pathinfo($baseName, PATHINFO_EXTENSION);
+        $tempPath = tempnam(sys_get_temp_dir(), 'attachment_run_');
+        if ($tempPath === false) {
+            throw new \RuntimeException('No se pudo crear archivo temporal para la descarga.');
+        }
+
+        if ($extension !== '') {
+            $renamed = $tempPath . '.' . Str::lower($extension);
+            if (@rename($tempPath, $renamed)) {
+                $tempPath = $renamed;
+            }
+        }
+
+        try {
+            app(GoogleDriveService::class)->downloadFile((string) $run->drive_file_id, $tempPath, auth()->id());
+        } catch (\Throwable $e) {
+            @unlink($tempPath);
+            throw $e;
+        }
+
+        return $tempPath;
+    }
+
+    private function shouldDeleteAfterSend(AttachmentPackageRun $run, string $path): bool
+    {
+        $localPath = $this->runLocalPath($run);
+
+        return !$localPath || realpath($localPath) !== realpath($path);
     }
 
     private function overallPercent(Project $project): int

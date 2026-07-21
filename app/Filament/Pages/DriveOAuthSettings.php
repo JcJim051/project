@@ -39,15 +39,14 @@ class DriveOAuthSettings extends Page implements HasForms
 
     public function mount(GoogleDriveService $driveService): void
     {
-        $setting = DriveOAuthSetting::query()->latest('id')->first();
         $active = $driveService->oauthCredentials();
         $this->refreshDriveStatus($driveService);
 
         $this->form->fill([
-            'client_id' => $active['client_id'] ?? ($setting?->client_id ?? ''),
-            'client_secret' => $active['client_secret'] ?? ($setting?->client_secret ?? ''),
-            'redirect_uri' => $active['redirect'] ?? ($setting?->redirect_uri ?? ''),
-            'projects_root_folder_id' => $active['projects_root_folder_id'] ?? ($setting?->projects_root_folder_id ?? ''),
+            'client_id' => $active['client_id'] ?? '',
+            'client_secret' => $active['client_secret'] ?? '',
+            'redirect_uri' => $active['redirect'] ?? '',
+            'projects_root_folder_id' => $active['projects_root_folder_id'] ?? '',
         ]);
     }
 
@@ -83,7 +82,9 @@ class DriveOAuthSettings extends Page implements HasForms
     {
         $payload = $this->form->getState();
 
-        $setting = DriveOAuthSetting::query()->latest('id')->first() ?: new DriveOAuthSetting();
+        // Crear una fila nueva evita descifrar registros antiguos que pudieron
+        // quedar inválidos después de cambios de APP_KEY o restauraciones.
+        $setting = new DriveOAuthSetting();
         $setting->fill($payload);
         $setting->updated_by = auth()->id();
         $setting->save();

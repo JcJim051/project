@@ -7,7 +7,7 @@ import re
 import unicodedata
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import letter
@@ -24,6 +24,41 @@ def sanitize_name(value: str) -> str:
     value = re.sub(r"\s+", " ", value.strip())
     value = value.strip(" -")
     return value or "archivo"
+
+
+def ordered_manifest_files(files: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    return sorted(
+        files,
+        key=lambda item: (
+            str(item.get("sort_key", "")).lower(),
+            str(item.get("name", "")).lower(),
+        ),
+    )
+
+
+def grouped_manifest_files(files: List[Dict[str, str]]) -> List[Tuple[str, List[Dict[str, str]]]]:
+    groups: Dict[str, List[Dict[str, str]]] = {}
+    order: Dict[str, str] = {}
+    for item in ordered_manifest_files(files):
+        folder = str(item.get("folder_name") or "Sin carpeta").strip() or "Sin carpeta"
+        key = folder.lower()
+        groups.setdefault(key, [])
+        order.setdefault(key, folder)
+
+        bundle_files = item.get("bundle_files") or []
+        if bundle_files:
+            groups[key].extend(ordered_manifest_files(list(bundle_files)))
+        else:
+            groups[key].append(item)
+
+    return sorted(
+        [(order[key], groups[key]) for key in groups],
+        key=lambda pair: sanitize_name(pair[0]).lower(),
+    )
+
+
+def attachment_display_name(item: Dict[str, str]) -> str:
+    return str(item.get("name") or "archivo")
 
 
 def create_cover_pdf(title: str, files: List[Dict[str, str]], logo_path: str | None = None) -> bytes:
@@ -93,19 +128,33 @@ def create_cover_pdf(title: str, files: List[Dict[str, str]], logo_path: str | N
     c.drawString(side_margin, y, "Listado de adjuntos:")
     y -= 0.25 * inch
 
-    ordered_files = sorted(files, key=lambda item: str(item.get("name", "")).lower())
+    ordered_files = ordered_manifest_files(files)
     if not ordered_files:
         c.drawString(side_margin + 0.2 * inch, y, "(ninguno)")
         y -= 0.22 * inch
     else:
-        for item in ordered_files:
-            if y < bottom_margin + 0.4 * inch:
+        for folder, folder_files in grouped_manifest_files(files):
+            if y < bottom_margin + 0.55 * inch:
                 c.showPage()
                 draw_logo()
                 y = height - top_margin - header_height
                 c.setFont(font_name, 10)
-            c.drawString(side_margin + 0.2 * inch, y, item["name"])
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(side_margin + 0.05 * inch, y, folder)
             y -= 0.2 * inch
+            c.setFont(font_name, 10)
+            for item in folder_files:
+                if y < bottom_margin + 0.4 * inch:
+                    c.showPage()
+                    draw_logo()
+                    y = height - top_margin - header_height
+                    c.setFont("Helvetica-Bold", 10)
+                    c.drawString(side_margin + 0.05 * inch, y, folder)
+                    y -= 0.2 * inch
+                    c.setFont(font_name, 10)
+                c.drawString(side_margin + 0.25 * inch, y, item["name"])
+                y -= 0.18 * inch
+            y -= 0.06 * inch
 
     note_text = (
         "Nota: Los documentos relacionados en este listado están adjuntos dentro de este PDF. "
@@ -136,26 +185,50 @@ def create_cover_pdf(title: str, files: List[Dict[str, str]], logo_path: str | N
     return buffer.read()
 
 
-def build_pdf_with_attachments(cover_pdf: bytes, files: List[Dict[str, str]], output_pdf: Path) -> List[str]:
+def build_pdf_bytes_with_attachments(
+    title: str,
+    files: List[Dict[str, str]],
+    logo_path: str | None = None,
+) -> Tuple[bytes, List[str]]:
     writer = PdfWriter()
-    reader = PdfReader(BytesIO(cover_pdf))
+    reader = PdfReader(BytesIO(create_cover_pdf(title, files, logo_path)))
     for page in reader.pages:
         writer.add_page(page)
 
     failed: List[str] = []
     for item in files:
-        path = Path(item["path"])
-        if not path.exists():
-            failed.append(item["name"])
-            continue
         try:
-            with path.open("rb") as fh:
-                writer.add_attachment(item["name"], fh.read())
-        except Exception:
-            failed.append(item["name"])
+            if item.get("bundle_files"):
+                bundle_title = str(item.get("bundle_title") or Path(str(item["name"])).stem)
+                bundle_bytes, nested_failed = build_pdf_bytes_with_attachments(
+                    bundle_title,
+                    list(item.get("bundle_files") or []),
+                    logo_path,
+                )
+                writer.add_attachment(attachment_display_name(item), bundle_bytes)
+                failed.extend([f"{item['name']} -> {name}" for name in nested_failed])
+                continue
 
+            path = Path(item["path"])
+            if not path.exists():
+                failed.append(str(item["name"]))
+                continue
+
+            with path.open("rb") as fh:
+                writer.add_attachment(attachment_display_name(item), fh.read())
+        except Exception:
+            failed.append(str(item["name"]))
+
+    output = BytesIO()
+    writer.write(output)
+    output.seek(0)
+    return output.read(), failed
+
+
+def build_pdf_with_attachments(title: str, files: List[Dict[str, str]], output_pdf: Path, logo_path: str | None = None) -> List[str]:
+    pdf_bytes, failed = build_pdf_bytes_with_attachments(title, files, logo_path)
     with output_pdf.open("wb") as fh:
-        writer.write(fh)
+        fh.write(pdf_bytes)
     return failed
 
 
@@ -184,7 +257,7 @@ def main() -> int:
         base_name = sanitize_name(title)
         if not base_name:
             base_name = sanitize_name(str(doc.get("base_name") or title))
-        files = sorted(doc.get("files") or [], key=lambda item: str(item.get("name", "")).lower())
+        files = ordered_manifest_files(list(doc.get("files") or []))
         output_name = f"{base_name}_V{version_number}.pdf"
         output_name = sanitize_name(output_name[:-4]) + ".pdf"
         original_output_name = output_name
@@ -195,14 +268,15 @@ def main() -> int:
         generated_set.add(output_name.lower())
         output_pdf = output_dir / output_name
 
-        cover = create_cover_pdf(title, files, logo_path)
-        failed = build_pdf_with_attachments(cover, files, output_pdf)
+        failed = build_pdf_with_attachments(title, files, output_pdf, logo_path)
         generated.append(output_name)
 
         general_lines.append(f"== {title} ==")
         if files:
-            for item in files:
-                general_lines.append(item["name"])
+            for folder, folder_files in grouped_manifest_files(files):
+                general_lines.append(f"[{folder}]")
+                for item in folder_files:
+                    general_lines.append(f"  {item['name']}")
         else:
             general_lines.append("(sin adjuntos)")
         general_lines.append("")

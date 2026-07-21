@@ -14,10 +14,14 @@
 
         <div class="rounded-lg border border-gray-200 bg-white p-4">
             <h3 class="text-sm font-semibold text-gray-800">Resumen del proyecto</h3>
-            <div class="mt-4 grid gap-4 md:grid-cols-3">
+            <div class="mt-4 grid gap-4 md:grid-cols-4">
                 <div>
                     <div class="text-xs font-medium uppercase tracking-wide text-gray-500">Objeto</div>
                     <div class="mt-1 text-sm font-semibold text-gray-800">{{ $project->objeto_proyecto ?: '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-medium uppercase tracking-wide text-gray-500">ID proyecto</div>
+                    <div class="mt-1 text-sm font-semibold text-gray-800">{{ $project->id_proyecto ?: 'Sin ID proyecto' }}</div>
                 </div>
                 <div>
                     <div class="text-xs font-medium uppercase tracking-wide text-gray-500">BPIN</div>

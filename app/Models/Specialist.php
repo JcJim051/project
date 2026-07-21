@@ -9,6 +9,7 @@ class Specialist extends Model
     protected $fillable = [
         'nombre',
         'correo',
+        'documento',
         'telefono',
         'especialidad',
         'notas',

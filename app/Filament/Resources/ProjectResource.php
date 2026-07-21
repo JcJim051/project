@@ -101,7 +101,7 @@ class ProjectResource extends Resource
                         TextInput::make('bipin')
                             ->label('BPIN')
                             ->maxLength(100)
-                            ->helperText('Opcional. Si está vacío y la fuente es recursos propios, se usará ID proyecto en certificaciones.'),
+                            ->helperText('Opcional. Se conserva como dato del proyecto, pero las certificaciones ahora usan siempre el ID proyecto.'),
                         Select::make('municipio_ids')
                             ->label('Municipios')
                             ->options(fn (): array => static::activeMunicipioOptions())

@@ -31,6 +31,7 @@ class SpecialistResource extends Resource
         return $form->schema([
             TextInput::make('nombre')->required()->maxLength(255),
             TextInput::make('correo')->email()->required()->maxLength(255)->unique(ignoreRecord: true),
+            TextInput::make('documento')->maxLength(100),
             TextInput::make('telefono')->maxLength(50),
             TextInput::make('especialidad')->maxLength(255)->helperText('Ejemplo: Hidráulico, Estructural, Geotecnia, Ambiental.'),
             Textarea::make('notas')->rows(3)->columnSpanFull(),
@@ -54,6 +55,7 @@ class SpecialistResource extends Resource
             TextColumn::make('nombre')->searchable()->sortable(),
             TextColumn::make('especialidad')->label('Especialidad')->searchable()->toggleable(),
             TextColumn::make('correo')->searchable()->copyable(),
+            TextColumn::make('documento')->label('Documento')->searchable()->toggleable(),
             TextColumn::make('plane_sync_status')
                 ->label('Plane')
                 ->badge()

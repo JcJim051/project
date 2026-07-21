@@ -665,7 +665,9 @@
                                     @endif
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    @if ($run->zip_local_path && file_exists($run->zip_local_path))
+                                    @php($hasDriveOutput = filled($run->drive_file_id) && $run->status === 'success')
+                                    @php($hasLegacyLocalOutput = $run->zip_local_path && file_exists($run->zip_local_path))
+                                    @if ($hasDriveOutput || $hasLegacyLocalOutput)
                                         <a href="{{ route('projects.attachments.runs.download', [$project, $run]) }}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
                                             {{ $run->status === 'success' ? 'Descargar ZIP' : 'Descargar ZIP (local)' }}
                                         </a>

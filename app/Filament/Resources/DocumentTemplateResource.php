@@ -54,6 +54,7 @@ class DocumentTemplateResource extends Resource
                         'bank_plan_inversion' => 'Banco F-PE-23',
                         'bank_plan_desarrollo' => 'Banco F-PE-24',
                         'bank_cronograma' => 'Banco F-PE-25',
+                        'meeting_attendance' => 'Asistencias a reuniones',
                     ])
                     ->default('docx_general')
                     ->required()
@@ -83,7 +84,7 @@ class DocumentTemplateResource extends Resource
                     })
                     ->downloadable()
                     ->openable()
-                    ->helperText('DOCX o XLSX. DOCX usa marcadores como {{OBJETO}}, {{BPIN}}, {{FORMULADOR}}, {{FECHA}}.'),
+                    ->helperText('DOCX o XLSX. DOCX usa marcadores como {{OBJETO}}, {{ID_PROYECTO}}, {{BIPIN}}, {{FORMULADOR}}, {{FECHA}}. El marcador legado {{BPIN}} tambien se llena con el ID proyecto. Para Asistencias a reuniones, carga la plantilla oficial XLSX base que se debe diligenciar y convertir a PDF.'),
             ]);
     }
 
