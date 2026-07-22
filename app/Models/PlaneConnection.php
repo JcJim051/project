@@ -21,6 +21,7 @@ class PlaneConnection extends Model
         'cycles_path_template',
         'cycle_issues_path_template',
         'issues_path_template',
+        'invitations_path',
         'issue_detail_path_template',
         'project_url_template',
         'api_key_header',

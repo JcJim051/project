@@ -398,15 +398,7 @@ class PlaneProvisioningService
                 ];
             }
 
-            $response = $this->planeWriteWithRetry(
-                $request,
-                'post',
-                $this->interpolatedUrl($connection, '/api/v1/workspaces/{workspace_slug}/invitations/', $this->baseReplacements($connection)),
-                [
-                    'email' => $email,
-                    'role' => 15,
-                ]
-            );
+            $response = $this->createWorkspaceInvitation($request, $connection, $email);
 
             if (! $response->successful() && ! in_array($response->status(), [400, 409, 422], true)) {
                 $body = trim((string) $response->body());
@@ -414,6 +406,10 @@ class PlaneProvisioningService
                     'Plane respondió con estado ' . $response->status()
                     . ($body !== '' ? ' · ' . Str::limit($body, 300) : '')
                 );
+            }
+
+            if ($response->successful() && ! $this->invitationResponseConfirmsDelivery($response)) {
+                throw new \RuntimeException('Plane creó el registro de invitación, pero no confirmó la generación del token ni el envío del correo. El endpoint público de Plane requiere la corrección de invitaciones.');
             }
 
             $refreshedDirectory = $this->planeMemberDirectory($request, $connection);
@@ -491,15 +487,7 @@ class PlaneProvisioningService
                 ];
             }
 
-            $response = $this->planeWriteWithRetry(
-                $request,
-                'post',
-                $this->interpolatedUrl($connection, '/api/v1/workspaces/{workspace_slug}/invitations/', $this->baseReplacements($connection)),
-                [
-                    'email' => $email,
-                    'role' => 15,
-                ]
-            );
+            $response = $this->createWorkspaceInvitation($request, $connection, $email);
 
             if (! $response->successful() && ! in_array($response->status(), [400, 409, 422], true)) {
                 $body = trim((string) $response->body());
@@ -507,6 +495,10 @@ class PlaneProvisioningService
                     'Plane respondió con estado ' . $response->status()
                     . ($body !== '' ? ' · ' . Str::limit($body, 300) : '')
                 );
+            }
+
+            if ($response->successful() && ! $this->invitationResponseConfirmsDelivery($response)) {
+                throw new \RuntimeException('Plane creó el registro de invitación, pero no confirmó la generación del token ni el envío del correo. El endpoint público de Plane requiere la corrección de invitaciones.');
             }
 
             $refreshedDirectory = $this->planeMemberDirectory($request, $connection);
@@ -587,6 +579,54 @@ class PlaneProvisioningService
                 'message' => $e->getMessage(),
             ];
         }
+    }
+
+    private function createWorkspaceInvitation(PendingRequest $request, PlaneConnection $connection, string $email): Response
+    {
+        return $this->planeWriteWithRetry(
+            $request,
+            'post',
+            $this->interpolatedUrl(
+                $connection,
+                $connection->invitations_path ?: '/api/v1/workspaces/{workspace_slug}/invitations/',
+                $this->baseReplacements($connection)
+            ),
+            [
+                'email' => $email,
+                'role' => 15,
+            ]
+        );
+    }
+
+    private function invitationResponseConfirmsDelivery(Response $response): bool
+    {
+        $payload = $response->json();
+
+        if (! is_array($payload)) {
+            return false;
+        }
+
+        $candidates = [
+            Arr::get($payload, 'email_dispatched'),
+            Arr::get($payload, 'token_generated'),
+            Arr::get($payload, 'token'),
+            Arr::get($payload, 'data.token'),
+            Arr::get($payload, 'invitation.token'),
+            Arr::get($payload, 'results.0.token'),
+            Arr::get($payload, 'data.results.0.token'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if ($candidate === true) {
+                return true;
+            }
+
+            if (is_string($candidate) && trim($candidate) !== '') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function projectTeamStatus(Project $project): array

@@ -76,6 +76,7 @@ class PlaneUserInvitationTest extends TestCase
             $table->string('cycles_path_template')->nullable();
             $table->string('cycle_issues_path_template')->nullable();
             $table->string('issues_path_template')->nullable();
+            $table->string('invitations_path')->nullable();
             $table->string('issue_detail_path_template')->nullable();
             $table->string('project_url_template')->nullable();
             $table->string('api_key_header')->nullable();
@@ -114,6 +115,7 @@ class PlaneUserInvitationTest extends TestCase
             'workspace_id' => 'orbit',
             'auth_type' => 'bearer_token',
             'access_token' => 'token',
+            'invitations_path' => '/api/v1/workspaces/{workspace_slug}/invitations/',
             'activo' => true,
             'timeout_segundos' => 5,
         ]);
@@ -135,7 +137,7 @@ class PlaneUserInvitationTest extends TestCase
                         ],
                     ]],
                 ], 200),
-            'https://plane.test/api/v1/workspaces/orbit/invitations/' => Http::response(['ok' => true], 201),
+            'https://plane.test/api/v1/workspaces/orbit/invitations/' => Http::response(['email_dispatched' => true], 201),
         ]);
 
         $result = app(PlaneProvisioningService::class)->inviteUserToWorkspace($user);
@@ -157,6 +159,7 @@ class PlaneUserInvitationTest extends TestCase
             'workspace_id' => 'orbit',
             'auth_type' => 'bearer_token',
             'access_token' => 'token',
+            'invitations_path' => '/api/v1/workspaces/{workspace_slug}/invitations/',
             'activo' => true,
             'timeout_segundos' => 5,
         ]);
@@ -209,6 +212,7 @@ class PlaneUserInvitationTest extends TestCase
             'workspace_id' => 'orbit',
             'auth_type' => 'bearer_token',
             'access_token' => 'token',
+            'invitations_path' => '/api/v1/workspaces/{workspace_slug}/invitations/',
             'activo' => true,
             'timeout_segundos' => 5,
         ]);
@@ -231,7 +235,7 @@ class PlaneUserInvitationTest extends TestCase
                         ],
                     ]],
                 ], 200),
-            'https://plane.test/api/v1/workspaces/orbit/invitations/' => Http::response(['ok' => true], 201),
+            'https://plane.test/api/v1/workspaces/orbit/invitations/' => Http::response(['token_generated' => true], 201),
         ]);
 
         $result = app(PlaneProvisioningService::class)->inviteSpecialistToWorkspace($specialist);
@@ -243,5 +247,41 @@ class PlaneUserInvitationTest extends TestCase
         $this->assertSame('linked', $specialist->plane_sync_status);
         $this->assertSame('plane-user-2', $specialist->plane_user_id);
         $this->assertNull($specialist->plane_last_error);
+    }
+
+    public function test_invite_user_to_plane_marks_error_when_plane_returns_success_without_token(): void
+    {
+        PlaneConnection::query()->create([
+            'nombre' => 'Plane',
+            'url_base' => 'https://plane.test',
+            'workspace_id' => 'orbit',
+            'auth_type' => 'bearer_token',
+            'access_token' => 'token',
+            'invitations_path' => '/api/v1/workspaces/{workspace_slug}/invitations/',
+            'activo' => true,
+            'timeout_segundos' => 5,
+        ]);
+
+        $user = User::query()->create([
+            'name' => 'Carlos Pérez',
+            'email' => 'carlos@example.com',
+        ]);
+
+        Http::fake([
+            'https://plane.test/api/v1/workspaces/orbit/members/' => Http::sequence()
+                ->push(['results' => []], 200),
+            'https://plane.test/api/v1/workspaces/orbit/invitations/' => Http::response(['id' => 'invite-123'], 201),
+        ]);
+
+        $result = app(PlaneProvisioningService::class)->inviteUserToWorkspace($user);
+
+        $this->assertFalse($result['success']);
+        $this->assertSame('error', $result['status']);
+        $this->assertStringContainsString('no confirmó la generación del token', $result['message']);
+
+        $user->refresh();
+        $this->assertSame('error', $user->plane_sync_status);
+        $this->assertNull($user->plane_user_id);
+        $this->assertStringContainsString('no confirmó la generación del token', (string) $user->plane_last_error);
     }
 }

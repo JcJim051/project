@@ -1,0 +1,85 @@
+diff --git a/plane/api/views/invite.py b/plane/api/views/invite.py
+--- a/plane/api/views/invite.py
++++ b/plane/api/views/invite.py
+@@ -2,6 +2,14 @@
+ # SPDX-License-Identifier: AGPL-3.0-only
+ # See the LICENSE file for details.
+ 
++# Python imports
++from datetime import datetime
++
++import jwt
++
++# Django imports
++from django.conf import settings
++
+ # Third party imports
+ from rest_framework.response import Response
+ from rest_framework import status
+@@ -15,8 +23,10 @@ from drf_spectacular.utils import (
+ 
+ # Module imports
+ from plane.api.views.base import BaseViewSet
++from plane.bgtasks.workspace_invitation_task import workspace_invitation
+ from plane.db.models import WorkspaceMemberInvite, Workspace
+ from plane.api.serializers import WorkspaceInviteSerializer
++from plane.utils.host import base_host
+ from plane.utils.permissions import WorkspaceOwnerPermission
+ from plane.utils.openapi.parameters import WORKSPACE_SLUG_PARAMETER
+ 
+@@ -88,10 +98,51 @@ class WorkspaceInvitationsViewset(BaseViewSet):
+     )
+     def create(self, request, slug):
+         workspace = Workspace.objects.get(slug=slug)
+-        serializer = WorkspaceInviteSerializer(data=request.data, context={"slug": slug})
+-        serializer.is_valid(raise_exception=True)
+-        serializer.save(workspace=workspace, created_by=request.user)
+-        return Response(serializer.data, status=status.HTTP_201_CREATED)
++        email = str(request.data.get("email", "")).strip().lower()
++        invitation = WorkspaceMemberInvite.objects.filter(
++            workspace=workspace,
++            email=email,
++            accepted=False,
++            responded_at__isnull=True,
++        ).first()
++
++        token = jwt.encode(
++            {
++                "email": email,
++                "timestamp": datetime.now().timestamp(),
++            },
++            settings.SECRET_KEY,
++            algorithm="HS256",
++        )
++
++        if invitation:
++            invitation.token = token
++            invitation.role = request.data.get("role", invitation.role)
++            invitation.created_by = request.user
++            invitation.save(update_fields=["token", "role", "created_by", "updated_at"])
++            serializer = WorkspaceInviteSerializer(invitation)
++        else:
++            serializer = WorkspaceInviteSerializer(data=request.data, context={"slug": slug})
++            serializer.is_valid(raise_exception=True)
++            invitation = serializer.save(
++                workspace=workspace,
++                created_by=request.user,
++                token=token,
++            )
++
++        workspace_invitation.delay(
++            invitation.email,
++            workspace.id,
++            invitation.token,
++            base_host(request=request, is_app=True),
++            request.user.email,
++        )
++
++        response_data = dict(serializer.data)
++        response_data["token_generated"] = True
++        response_data["email_dispatched"] = True
++
++        return Response(response_data, status=status.HTTP_201_CREATED)
+ 
+     @extend_schema(
+         summary="Update workspace invite",

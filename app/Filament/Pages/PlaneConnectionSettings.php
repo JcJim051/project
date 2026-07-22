@@ -51,6 +51,7 @@ class PlaneConnectionSettings extends Page implements HasForms
             'cycles_path_template' => $record?->cycles_path_template ?? '/api/v1/workspaces/{workspace_slug}/projects/{project_id}/cycles/',
             'cycle_issues_path_template' => $record?->cycle_issues_path_template ?? '/api/v1/workspaces/{workspace_slug}/projects/{project_id}/cycles/{cycle_id}/cycle-issues/',
             'issues_path_template' => $record?->issues_path_template ?? '/api/v1/workspaces/{workspace_slug}/projects/{project_id}/issues/',
+            'invitations_path' => $record?->invitations_path ?? '/api/v1/workspaces/{workspace_slug}/invitations/',
             'issue_detail_path_template' => $record?->issue_detail_path_template ?? '/api/v1/workspaces/{workspace_slug}/projects/{project_id}/issues/{issue_id}/',
             'project_url_template' => $this->normalizedProjectUrlTemplate($record?->project_url_template),
             'api_key_header' => $record?->api_key_header ?? 'X-API-Key',
@@ -91,6 +92,7 @@ class PlaneConnectionSettings extends Page implements HasForms
                 TextInput::make('cycles_path_template')->label('Ruta crear ciclos')->required()->maxLength(255),
                 TextInput::make('cycle_issues_path_template')->label('Ruta asignar tareas a ciclos')->required()->maxLength(255),
                 TextInput::make('issues_path_template')->label('Ruta crear/listar tareas')->required()->maxLength(255),
+                TextInput::make('invitations_path')->label('Ruta invitaciones workspace')->required()->maxLength(255)->helperText('Puede usar {workspace_slug}. Debe ser una ruta de la API pública compatible con la API key.'),
                 TextInput::make('issue_detail_path_template')->label('Ruta detalle tarea')->required()->maxLength(255)->helperText('Puede usar {workspace_slug}, {project_id} y {issue_id}.'),
                 TextInput::make('project_url_template')->label('Ruta abrir proyecto en Plane')->required()->maxLength(255)->helperText('Puede usar {workspace_slug} y {project_id}.'),
                 TextInput::make('api_key_header')->maxLength(255)->visible(fn ($get) => $get('auth_type') === 'api_key'),
@@ -185,6 +187,7 @@ class PlaneConnectionSettings extends Page implements HasForms
         $payload['client_id'] = trim((string) ($payload['client_id'] ?? '')) ?: null;
         $payload['client_secret'] = trim((string) ($payload['client_secret'] ?? '')) ?: null;
         $payload['oauth_token_url'] = trim((string) ($payload['oauth_token_url'] ?? '')) ?: null;
+        $payload['invitations_path'] = trim((string) ($payload['invitations_path'] ?? '')) ?: '/api/v1/workspaces/{workspace_slug}/invitations/';
         $payload['project_url_template'] = $this->normalizedProjectUrlTemplate($payload['project_url_template'] ?? null);
 
         if ($authType === 'api_key') {
