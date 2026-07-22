@@ -1,5 +1,6 @@
 from pathlib import Path
 import py_compile
+import re
 import sys
 
 
@@ -11,43 +12,6 @@ if 'response_data["email_dispatched"] = True' in source:
     print(f"La correccion ya estaba aplicada en {target}.")
     raise SystemExit(0)
 
-imports_marker = """# See the LICENSE file for details.
-
-# Third party imports
-"""
-imports_replacement = """# See the LICENSE file for details.
-
-# Python imports
-from datetime import datetime
-
-import jwt
-
-# Django imports
-from django.conf import settings
-
-# Third party imports
-"""
-
-module_marker = """from plane.api.views.base import BaseViewSet
-from plane.db.models import WorkspaceMemberInvite, Workspace
-from plane.api.serializers import WorkspaceInviteSerializer
-from plane.utils.permissions import WorkspaceOwnerPermission
-"""
-module_replacement = """from plane.api.views.base import BaseViewSet
-from plane.bgtasks.workspace_invitation_task import workspace_invitation
-from plane.db.models import WorkspaceMemberInvite, Workspace
-from plane.api.serializers import WorkspaceInviteSerializer
-from plane.utils.host import base_host
-from plane.utils.permissions import WorkspaceOwnerPermission
-"""
-
-create_marker = """    def create(self, request, slug):
-        workspace = Workspace.objects.get(slug=slug)
-        serializer = WorkspaceInviteSerializer(data=request.data, context={"slug": slug})
-        serializer.is_valid(raise_exception=True)
-        serializer.save(workspace=workspace, created_by=request.user)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-"""
 create_replacement = """    def create(self, request, slug):
         workspace = Workspace.objects.get(slug=slug)
         email = str(request.data.get("email", "")).strip().lower()
@@ -97,18 +61,52 @@ create_replacement = """    def create(self, request, slug):
         return Response(response_data, status=status.HTTP_201_CREATED)
 """
 
-markers = [imports_marker, module_marker, create_marker]
-missing = [str(index + 1) for index, marker in enumerate(markers) if marker not in source]
-if missing:
+required_symbols = [
+    "WorkspaceInvitationsViewset",
+    "WorkspaceMemberInvite",
+    "Workspace",
+    "WorkspaceInviteSerializer",
+    "Response",
+    "status",
+]
+missing_symbols = [symbol for symbol in required_symbols if symbol not in source]
+if missing_symbols:
     raise SystemExit(
-        "No se modifico Plane: la version instalada no coincide con los marcadores "
-        + ", ".join(missing)
-        + "."
+        "No se modifico Plane: faltan simbolos esperados en esta version: "
+        + ", ".join(missing_symbols)
     )
 
-patched = source.replace(imports_marker, imports_replacement, 1)
-patched = patched.replace(module_marker, module_replacement, 1)
-patched = patched.replace(create_marker, create_replacement, 1)
+class_match = re.search(r"(?m)^class WorkspaceInvitationsViewset\b", source)
+if not class_match:
+    raise SystemExit("No se modifico Plane: no se encontro la clase de invitaciones.")
+
+class_source = source[class_match.start():]
+create_match = re.search(
+    r"(?ms)^    def create\(self,\s*request,\s*slug\):\n.*?(?=^    (?:@|def\s))",
+    class_source,
+)
+if not create_match:
+    raise SystemExit("No se modifico Plane: no se encontro el metodo create de invitaciones.")
+
+start = class_match.start() + create_match.start()
+end = class_match.start() + create_match.end()
+patched = source[:start] + create_replacement + source[end:]
+
+required_imports = [
+    "from datetime import datetime",
+    "import jwt",
+    "from django.conf import settings",
+    "from plane.bgtasks.workspace_invitation_task import workspace_invitation",
+    "from plane.utils.host import base_host",
+]
+missing_imports = [line for line in required_imports if line not in patched]
+if missing_imports:
+    insertion = "\n".join(missing_imports) + "\n\n"
+    future_imports = list(re.finditer(r"(?m)^from __future__ import .+$", patched))
+    insert_at = future_imports[-1].end() + 1 if future_imports else 0
+    patched = patched[:insert_at] + insertion + patched[insert_at:]
+
+compile(patched, str(target), "exec")
 
 backup = target.with_suffix(target.suffix + ".orbit-backup")
 if not backup.exists():
