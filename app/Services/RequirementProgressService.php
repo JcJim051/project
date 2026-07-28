@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\RequirementEvidence;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
@@ -21,12 +22,13 @@ class RequirementProgressService
 
         $statuses = [];
         foreach ($requirements as $requirement) {
-            $directCount = $this->validEvidenceCount($requirement->id, $evidenceByRequirement);
+            $validEvidences = $this->validEvidences($requirement, $evidenceByRequirement);
+            $directCount = $validEvidences->count();
             $statuses[$requirement->id] = [
                 'id' => (int) $requirement->id,
                 'has_evidence' => $directCount > 0,
                 'valid_evidence_count' => $directCount,
-                'fulfillment_source' => $this->directFulfillmentSource($requirement->id, $evidenceByRequirement),
+                'fulfillment_source' => $this->directFulfillmentSource($validEvidences),
                 'is_composite_parent' => false,
                 'composite_folder' => null,
                 'composite_done' => 0,
@@ -36,7 +38,7 @@ class RequirementProgressService
         }
 
         foreach ($requirements as $requirement) {
-            if (!$this->isCompositeParent($requirement)) {
+            if (! $this->isCompositeParent($requirement)) {
                 continue;
             }
 
@@ -122,12 +124,12 @@ class RequirementProgressService
 
         $statuses = $analysis['requirements'] ?? [];
         foreach ($requirements as $requirement) {
-            if (!(bool) ($statuses[$requirement->id]['count_in_progress'] ?? true)) {
+            if (! (bool) ($statuses[$requirement->id]['count_in_progress'] ?? true)) {
                 continue;
             }
 
             $groupCode = $detectTopGroupCode((string) ($requirement->carpeta ?? ''));
-            if (!$groupCode || !isset($summary[$groupCode])) {
+            if (! $groupCode || ! isset($summary[$groupCode])) {
                 continue;
             }
 
@@ -159,6 +161,7 @@ class RequirementProgressService
     public function compositeTargetFolder($requirement): ?string
     {
         $code = $this->compositeCode($requirement);
+
         return $code ? self::COMPOSITE_BUDGET_FOLDERS[$code] : null;
     }
 
@@ -173,7 +176,7 @@ class RequirementProgressService
             }
         }
 
-        if (!$code) {
+        if (! $code) {
             foreach ([$requirement->nombre_documento ?? null, $requirement->requisito ?? null, $requirement->texto ?? null] as $field) {
                 $value = $this->normalize((string) $field);
                 if (preg_match('/(?:^|\s)(2\.(?:1|4|6))(?:\s|$)/', $value, $matches)) {
@@ -183,7 +186,7 @@ class RequirementProgressService
             }
         }
 
-        if (!$code) {
+        if (! $code) {
             return null;
         }
 
@@ -202,20 +205,20 @@ class RequirementProgressService
         return $code;
     }
 
-    private function validEvidenceCount(int $requirementId, Collection $evidenceByRequirement): int
+    private function validEvidences($requirement, Collection $evidenceByRequirement): Collection
     {
         return $evidenceByRequirement
-            ->get($requirementId, collect())
+            ->get($requirement->id, collect())
             ->filter(fn ($evidence) => (bool) ($evidence->in_drive ?? false))
+            ->filter(fn ($evidence) => ! $requirement->requiresLicensePermitClassification()
+                || RequirementEvidence::isValidLicensePermitStatus($evidence->license_permit_status))
             ->unique(fn ($evidence) => $evidence->drive_file_id ?: mb_strtolower((string) ($evidence->drive_file_name ?? '')))
-            ->count();
+            ->values();
     }
 
-    private function directFulfillmentSource(int $requirementId, Collection $evidenceByRequirement): string
+    private function directFulfillmentSource(Collection $evidences): string
     {
-        $sources = $evidenceByRequirement
-            ->get($requirementId, collect())
-            ->filter(fn ($evidence) => (bool) ($evidence->in_drive ?? false))
+        $sources = $evidences
             ->pluck('source')
             ->map(fn ($source) => mb_strtolower((string) $source))
             ->filter()

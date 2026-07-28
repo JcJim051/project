@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\Requirement;
 use App\Models\RequirementEvidence;
 use App\Services\GoogleDriveService;
+use App\Services\LicensePermitEvidenceService;
 use App\Services\RequirementProgressService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -29,18 +30,18 @@ class ProjectDriveEvidenceController extends Controller
             return response()->json(['message' => 'Debes enviar requirement_id o folder.'], 422);
         }
 
-        $requirement = !empty($data['requirement_id'])
+        $requirement = ! empty($data['requirement_id'])
             ? Requirement::query()->findOrFail((int) $data['requirement_id'])
             : $project->requisitos()
                 ->where('requirements.carpeta', (string) $data['folder'])
                 ->select('requirements.*')
                 ->first();
 
-        if (!$requirement) {
+        if (! $requirement) {
             return response()->json(['message' => 'No se encontró un requisito para la carpeta enviada.'], 404);
         }
 
-        if (!$project->requisitos()->where('requirements.id', $requirement->id)->exists()) {
+        if (! $project->requisitos()->where('requirements.id', $requirement->id)->exists()) {
             abort(403, 'El requisito no pertenece al proyecto.');
         }
 
@@ -59,6 +60,7 @@ class ProjectDriveEvidenceController extends Controller
         $offset = ($page - 1) * $perPage;
         $slice = $items->slice($offset, $perPage)->values()->map(function (array $file) {
             $name = (string) ($file['name'] ?? '');
+
             return [
                 'id' => $file['id'] ?? null,
                 'name' => $name,
@@ -93,7 +95,24 @@ class ProjectDriveEvidenceController extends Controller
             'file_ids' => ['required', 'array', 'min:1'],
             'file_ids.*' => ['required', 'string'],
             'note' => ['nullable', 'string', 'max:1000'],
+            'license_permit_status' => [
+                'nullable',
+                'string',
+                'in:application,issued',
+            ],
+            'file_statuses' => ['nullable', 'array'],
+            'file_statuses.*' => ['nullable', 'string', 'in:application,issued'],
         ]);
+        if ($requirement->requiresLicensePermitClassification()) {
+            foreach ($data['file_ids'] as $fileId) {
+                $status = $data['file_statuses'][$fileId] ?? $data['license_permit_status'] ?? null;
+                if (! RequirementEvidence::isValidLicensePermitStatus($status)) {
+                    return response()->json([
+                        'message' => 'Debes clasificar individualmente cada documento de licencia o permiso.',
+                    ], 422);
+                }
+            }
+        }
 
         $linked = [];
         $conflicts = [];
@@ -108,12 +127,23 @@ class ProjectDriveEvidenceController extends Controller
                     'file_id' => $fileId,
                     'current_requirement_id' => (int) $existing->requirement_id,
                 ];
+
                 continue;
             }
 
             $meta = $drive->getDriveFileMeta($fileId, auth()->id());
-            $row = $drive->linkRequirementToDriveFile($project, $requirement, $meta, auth()->id(), $data['note'] ?? null);
+            $row = $drive->linkRequirementToDriveFile(
+                $project,
+                $requirement,
+                $meta,
+                auth()->id(),
+                $data['note'] ?? null,
+                $data['file_statuses'][$fileId] ?? $data['license_permit_status'] ?? null
+            );
             $linked[] = $row->id;
+        }
+        if ($requirement->requiresLicensePermitClassification() && $linked !== []) {
+            app(LicensePermitEvidenceService::class)->invalidateWorkflowValidation($project);
         }
 
         return response()->json([
@@ -122,7 +152,6 @@ class ProjectDriveEvidenceController extends Controller
             'conflicts' => $conflicts,
         ]);
     }
-
 
     public function unlinkFile(Project $project, Requirement $requirement, RequirementEvidence $evidence)
     {
@@ -133,7 +162,11 @@ class ProjectDriveEvidenceController extends Controller
             abort(404);
         }
 
+        $requiresInvalidation = $requirement->requiresLicensePermitClassification();
         $evidence->delete();
+        if ($requiresInvalidation) {
+            app(LicensePermitEvidenceService::class)->invalidateWorkflowValidation($project);
+        }
 
         return response()->json([
             'ok' => true,
@@ -158,7 +191,7 @@ class ProjectDriveEvidenceController extends Controller
             ], 422);
         }
 
-        if (!$evidence->drive_file_id) {
+        if (! $evidence->drive_file_id) {
             return response()->json([
                 'ok' => false,
                 'message' => 'La evidencia no tiene file_id de Drive.',
@@ -174,12 +207,16 @@ class ProjectDriveEvidenceController extends Controller
             ->update([
                 'in_drive' => false,
             ]);
+        if ($requirement->requiresLicensePermitClassification()) {
+            app(LicensePermitEvidenceService::class)->invalidateWorkflowValidation($project);
+        }
 
         return response()->json([
             'ok' => true,
             'message' => 'Archivo eliminado de Drive.',
         ]);
     }
+
     public function linkFilesBulk(Project $project, Request $request, GoogleDriveService $drive)
     {
         $this->authorizeProjectMutation();
@@ -190,9 +227,19 @@ class ProjectDriveEvidenceController extends Controller
             'links.*.requirement_id' => ['required', 'integer', 'exists:requirements,id'],
             'links.*.file_id' => ['required', 'string'],
             'links.*.note' => ['nullable', 'string', 'max:1000'],
+            'links.*.license_permit_status' => ['nullable', 'string', 'in:application,issued'],
         ]);
 
         $rows = collect($data['links'])->values();
+        foreach ($rows as $row) {
+            $linkedRequirement = Requirement::query()->find((int) $row['requirement_id']);
+            if ($linkedRequirement?->requiresLicensePermitClassification()
+                && ! RequirementEvidence::isValidLicensePermitStatus($row['license_permit_status'] ?? null)) {
+                return response()->json([
+                    'message' => 'Debes clasificar cada documento de licencia o permiso antes de vincularlo.',
+                ], 422);
+            }
+        }
         $report = [
             'linked' => [],
             'omitted' => [],
@@ -202,12 +249,13 @@ class ProjectDriveEvidenceController extends Controller
         DB::transaction(function () use ($rows, $project, $drive, &$report): void {
             foreach ($rows as $row) {
                 $requirement = Requirement::query()->find((int) $row['requirement_id']);
-                if (!$requirement || !$project->requisitos()->where('requirements.id', $requirement->id)->exists()) {
+                if (! $requirement || ! $project->requisitos()->where('requirements.id', $requirement->id)->exists()) {
                     $report['omitted'][] = [
                         'requirement_id' => (int) ($row['requirement_id'] ?? 0),
                         'file_id' => (string) ($row['file_id'] ?? ''),
                         'reason' => 'Requisito no pertenece al proyecto.',
                     ];
+
                     continue;
                 }
                 if (app(RequirementProgressService::class)->isCompositeParent($requirement)) {
@@ -216,6 +264,7 @@ class ProjectDriveEvidenceController extends Controller
                         'file_id' => (string) ($row['file_id'] ?? ''),
                         'reason' => 'Requisito automático por documentos requeridos: no permite vinculación directa.',
                     ];
+
                     continue;
                 }
 
@@ -229,6 +278,7 @@ class ProjectDriveEvidenceController extends Controller
                         'file_id' => (string) $row['file_id'],
                         'current_requirement_id' => (int) $existing->requirement_id,
                     ];
+
                     continue;
                 }
 
@@ -239,7 +289,8 @@ class ProjectDriveEvidenceController extends Controller
                         $requirement,
                         $meta,
                         auth()->id(),
-                        $row['note'] ?? null
+                        $row['note'] ?? null,
+                        $row['license_permit_status'] ?? null
                     );
                     $report['linked'][] = [
                         'requirement_id' => $requirement->id,
@@ -255,6 +306,13 @@ class ProjectDriveEvidenceController extends Controller
                 }
             }
         });
+        if ($rows->contains(function ($row): bool {
+            $requirement = Requirement::query()->find((int) $row['requirement_id']);
+
+            return (bool) $requirement?->requiresLicensePermitClassification();
+        }) && $report['linked'] !== []) {
+            app(LicensePermitEvidenceService::class)->invalidateWorkflowValidation($project);
+        }
 
         return response()->json([
             'linked_count' => count($report['linked']),
@@ -264,19 +322,54 @@ class ProjectDriveEvidenceController extends Controller
         ]);
     }
 
+    public function classify(
+        Project $project,
+        Requirement $requirement,
+        RequirementEvidence $evidence,
+        Request $request
+    ) {
+        $this->authorizeProjectMutation();
+        $this->ensureRequirementInProject($project, $requirement);
+
+        if ((int) $evidence->project_id !== (int) $project->id
+            || (int) $evidence->requirement_id !== (int) $requirement->id) {
+            abort(404);
+        }
+        if (! $requirement->requiresLicensePermitClassification()) {
+            return response()->json(['message' => 'Este requisito no requiere clasificación de licencia o permiso.'], 422);
+        }
+
+        $data = $request->validate([
+            'license_permit_status' => ['required', 'string', 'in:application,issued'],
+        ]);
+        $evidence->forceFill(app(LicensePermitEvidenceService::class)->classificationAttributes(
+            $requirement,
+            $data['license_permit_status'],
+            auth()->id()
+        ))->save();
+        app(LicensePermitEvidenceService::class)->invalidateWorkflowValidation($project);
+
+        return response()->json([
+            'ok' => true,
+            'license_permit_status' => $evidence->license_permit_status,
+            'license_permit_status_label' => $evidence->licensePermitStatusLabel(),
+            'message' => 'Clasificación actualizada.',
+        ]);
+    }
+
     private function ensureRequirementInProject(Project $project, Requirement $requirement): void
     {
-        if (!$project->requisitos()->where('requirements.id', $requirement->id)->exists()) {
+        if (! $project->requisitos()->where('requirements.id', $requirement->id)->exists()) {
             abort(403, 'El requisito no pertenece al proyecto.');
         }
     }
 
     private function ensureDriveReady(Project $project, GoogleDriveService $drive): void
     {
-        if (!$project->drive_folder_id) {
+        if (! $project->drive_folder_id) {
             abort(422, 'El proyecto no tiene carpeta de Drive configurada.');
         }
-        if (!$drive->isAuthorized(auth()->id())) {
+        if (! $drive->isAuthorized(auth()->id())) {
             abort(422, 'Conecta Drive antes de vincular evidencias.');
         }
     }
@@ -284,7 +377,7 @@ class ProjectDriveEvidenceController extends Controller
     private function authorizeProjectMutation(): void
     {
         $user = auth()->user();
-        if (!$user || !$user->canMutateProjects()) {
+        if (! $user || ! $user->canMutateProjects()) {
             abort(403);
         }
     }

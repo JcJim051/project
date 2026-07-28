@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\RequirementResource\Pages;
 use App\Models\Requirement;
+use App\Services\RequirementCloneService;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
@@ -11,6 +12,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\SelectColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\ToggleColumn;
@@ -99,13 +101,15 @@ class RequirementResource extends Resource
                             ->maxLength(255),
                         TextInput::make('tipo')
                             ->label('Tipo')
-                            ->maxLength(255),
+                            ->maxLength(255)
+                            ->helperText('Clasificación visual del requisito. En el flujo posterior normalmente se conserva al clonar.'),
                         TextInput::make('literal')
                             ->label('Literal')
                             ->maxLength(255),
                         TextInput::make('origen')
                             ->label('Origen')
-                            ->maxLength(255),
+                            ->maxLength(255)
+                            ->helperText('workflow_post_structure identifica requisitos del flujo posterior a la estructuración.'),
                     ]),
                 Section::make('Estado')
                     ->columns(2)
@@ -192,6 +196,31 @@ class RequirementResource extends Resource
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
+                Tables\Actions\Action::make('clone')
+                    ->label('Clonar')
+                    ->icon('heroicon-o-document-duplicate')
+                    ->color('gray')
+                    ->visible(fn (Requirement $record): bool => $record->workflowStepLinks()->exists())
+                    ->form([
+                        TextInput::make('name')
+                            ->label('Nombre del nuevo requisito')
+                            ->required()
+                            ->maxLength(255)
+                            ->helperText('Se conservarán la carpeta, el origen y la ubicación dentro del flujo.'),
+                    ])
+                    ->fillForm(fn (Requirement $record): array => [
+                        'name' => 'Copia de '.($record->nombre_documento ?: $record->requisito ?: 'requisito'),
+                    ])
+                    ->action(function (Requirement $record, array $data): void {
+                        $clone = app(RequirementCloneService::class)
+                            ->cloneForWorkflow($record, (string) $data['name']);
+
+                        Notification::make()
+                            ->title('Requisito clonado')
+                            ->body('Se creó '.$clone->nombre_documento.' en la misma ubicación del flujo.')
+                            ->success()
+                            ->send();
+                    }),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([

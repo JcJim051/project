@@ -132,6 +132,16 @@ class Project extends Model
         return $this->hasMany(AttachmentPackageRun::class);
     }
 
+    public function workflowStates()
+    {
+        return $this->hasMany(ProjectWorkflowState::class);
+    }
+
+    public function bankRequests()
+    {
+        return $this->hasMany(ProjectBankRequest::class);
+    }
+
     public function planeConnection()
     {
         return $this->belongsTo(PlaneConnection::class, 'plane_connection_id');
@@ -194,24 +204,24 @@ class Project extends Model
         }
 
         if (! Str::startsWith($template, ['http://', 'https://'])) {
-            $template = '/' . ltrim($template, '/');
+            $template = '/'.ltrim($template, '/');
 
             if (! Str::contains($template, '{workspace_slug}')) {
                 if (Str::startsWith($template, '/projects/')) {
-                    $template = '/{workspace_slug}' . $template;
+                    $template = '/{workspace_slug}'.$template;
                 } else {
-                    $template = '/{workspace_slug}/' . ltrim($template, '/');
+                    $template = '/{workspace_slug}/'.ltrim($template, '/');
                 }
             }
 
             if (preg_match('#/\{project_id\}/?$#', $template) === 1 && ! Str::contains($template, '/issues')) {
-                $template = rtrim($template, '/') . '/issues/';
+                $template = rtrim($template, '/').'/issues/';
             }
 
             $template = preg_replace('#\s+/#', '/', $template) ?? $template;
             $template = preg_replace('#/\s+#', '/', $template) ?? $template;
 
-            return rtrim((string) $connection->url_base, '/') . '/' . ltrim(strtr($template, [
+            return rtrim((string) $connection->url_base, '/').'/'.ltrim(strtr($template, [
                 '{workspace_slug}' => (string) $connection->workspace_id,
                 '{project_id}' => (string) $this->plane_project_id,
             ]), '/');

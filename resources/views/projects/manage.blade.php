@@ -48,11 +48,9 @@
                 })->values();
 
                 $calcNumeracion = $renumerated[$req->id] ?? $req->codigo_interno ?? $req->numeracion;
-                $validEvidenceCount = $reqEvidences
-                    ->where('in_drive', true)
-                    ->where('drive_folder_name', $req->carpeta)
-                    ->count();
-                $hasEvidence = $validEvidenceCount > 0;
+                $requirementStatus = ($progressAnalysis['requirements'] ?? [])[$req->id] ?? [];
+                $validEvidenceCount = (int) ($requirementStatus['valid_evidence_count'] ?? 0);
+                $hasEvidence = (bool) ($requirementStatus['has_evidence'] ?? false);
 
                 $studyName = null;
                 if ($sectionGroupCode === '05') {
@@ -72,6 +70,7 @@
                     'valid_evidence_count' => $validEvidenceCount,
                     'evidence_format_rule' => $req->evidence_format_rule,
                     'evidence_format_label' => \App\Models\Requirement::evidenceFormatRuleLabel($req->evidence_format_rule),
+                    'requires_license_permit_classification' => $req->requiresLicensePermitClassification(),
                     'upload_accept' => match ($req->evidence_format_rule) {
                         \App\Models\Requirement::EVIDENCE_RULE_EXCEL => '.xls,.xlsx,.xlsm,.csv',
                         \App\Models\Requirement::EVIDENCE_RULE_POWERPOINT => '.ppt,.pptx',
@@ -81,7 +80,7 @@
                         default => '',
                     },
                     'upload_url' => route('projects.manage.upload', [$project, $req]),
-                    'evidences' => $visibleEvidences->map(function ($evidence) {
+                    'evidences' => $visibleEvidences->map(function ($evidence) use ($project, $req) {
                         return [
                             'name' => $evidence->drive_file_name,
                             'display_name' => $evidence->drive_file_name,
@@ -90,6 +89,9 @@
                             'preview_url' => route('requirement-evidences.preview', ['evidence' => $evidence]),
                             'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                             'is_valid' => (bool) $evidence->in_drive,
+                            'license_permit_status' => $evidence->license_permit_status,
+                            'license_permit_status_label' => $evidence->licensePermitStatusLabel(),
+                            'classify_url' => route('projects.requirements.classify_evidence', [$project, $req, $evidence]),
                         ];
                     })->all(),
                 ];
@@ -168,6 +170,15 @@
     @endphp
 
     <style>
+        .overall-progress-fill--danger {
+            background: linear-gradient(90deg, #f87171 0%, #dc2626 100%);
+        }
+        .overall-progress-fill--warning {
+            background: linear-gradient(90deg, #fbbf24 0%, #d97706 100%);
+        }
+        .overall-progress-fill--success {
+            background: linear-gradient(90deg, #4ade80 0%, #16a34a 100%);
+        }
         .manage-shell {
             background: #f8fafc;
             border: 1px solid #e5e7eb;
@@ -582,114 +593,6 @@
                 </details>
             @endif
 
-            <div class="rounded-md border border-gray-200 bg-white p-4">
-                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <h4 class="text-sm font-semibold text-gray-800">Paquete PDF con adjuntos</h4>
-                        <p class="text-xs text-gray-500">
-                            Disponible desde {{ $attachmentsMinPercent }}%. Genera ZIP versionado (V{N}) y lo sube a Drive en 02 Cargue.
-                        </p>
-                    </div>
-                    <form method="POST" action="{{ route('projects.attachments.runs.store', $project) }}">
-                        @csrf
-                        <button
-                            type="submit"
-                            @disabled(!$canGenerateAttachmentPackage)
-                            class="px-3 py-2 rounded-md text-xs font-semibold {{ $canGenerateAttachmentPackage ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed' }}">
-                            Generar paquete con adjuntos
-                        </button>
-                    </form>
-                </div>
-
-                @if (isset($attachmentPdfHealth))
-                    <div class="mt-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-700">
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class="font-semibold text-gray-800">Health check:</span>
-                            <span class="rounded-full px-2 py-0.5 {{ $attachmentPdfHealth['python_ok'] ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700' }}">
-                                Python {{ $attachmentPdfHealth['python_ok'] ? 'OK' : 'ERROR' }}
-                            </span>
-                            <span class="rounded-full px-2 py-0.5 {{ $attachmentPdfHealth['script_exists'] ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700' }}">
-                                Script {{ $attachmentPdfHealth['script_exists'] ? 'OK' : 'NO ENCONTRADO' }}
-                            </span>
-                        </div>
-                        <div class="mt-1 text-[11px] text-gray-500">
-                            Binario: {{ $attachmentPdfHealth['python_bin'] }}
-                        </div>
-                        <div class="text-[11px] text-gray-500 break-all">
-                            Script: {{ $attachmentPdfHealth['script_path'] }}
-                        </div>
-                        @if (!empty($attachmentPdfHealth['python_version']))
-                            <div class="text-[11px] text-gray-500">
-                                Version: {{ $attachmentPdfHealth['python_version'] }}
-                            </div>
-                        @endif
-                        @if (!empty($attachmentPdfHealth['python_error']))
-                            <div class="mt-1 text-[11px] text-rose-600 break-all">
-                                Error: {{ $attachmentPdfHealth['python_error'] }}
-                            </div>
-                        @endif
-                    </div>
-                @endif
-
-                @if (!$canGenerateAttachmentPackage)
-                    <p class="mt-2 text-xs text-amber-700">Aun no se habilita: el proyecto debe estar al {{ $attachmentsMinPercent }}%.</p>
-                @endif
-
-                @if (isset($attachmentRuns) && $attachmentRuns->isNotEmpty())
-                    <div class="mt-3 space-y-2">
-                        @foreach ($attachmentRuns as $run)
-                            <div class="flex flex-col gap-2 rounded-md border border-gray-100 bg-gray-50 p-2 md:flex-row md:items-center md:justify-between">
-                                <div class="text-xs text-gray-700">
-                                    <span class="font-semibold">Run #{{ $run->id }}</span>
-                                    <span class="ml-2">Estado: {{ $run->status }}</span>
-                                    @if (in_array($run->status, ['pending', 'running'], true))
-                                        <span class="ml-2 text-indigo-700">
-                                            Etapa: {{ data_get($run->meta, 'stage_label', 'Procesando') }}
-                                            @if (data_get($run->meta, 'stage_percent') !== null)
-                                                @if (data_get($run->meta, 'stage_detail_percent') !== null)
-                                                    ({{ (int) data_get($run->meta, 'stage_detail_percent') }}% etapa | {{ (int) data_get($run->meta, 'stage_percent') }}% total)
-                                                @else
-                                                    ({{ (int) data_get($run->meta, 'stage_percent') }}% total)
-                                                @endif
-                                            @endif
-                                        </span>
-                                    @endif
-                                    @if ($run->version_number)
-                                        <span class="ml-2">Version: V{{ $run->version_number }}</span>
-                                    @endif
-                                    @if ($run->generated_pdf_count)
-                                        <span class="ml-2">PDFs: {{ $run->generated_pdf_count }}</span>
-                                    @endif
-                                    @if (data_get($run->meta, 'heartbeat_at'))
-                                        <span class="ml-2 text-gray-500">Actualizado: {{ data_get($run->meta, 'heartbeat_at') }}</span>
-                                    @endif
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    @php($hasDriveOutput = filled($run->drive_file_id) && $run->status === 'success')
-                                    @php($hasLegacyLocalOutput = $run->zip_local_path && file_exists($run->zip_local_path))
-                                    @if ($hasDriveOutput || $hasLegacyLocalOutput)
-                                        <a href="{{ route('projects.attachments.runs.download', [$project, $run]) }}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-                                            {{ $run->status === 'success' ? 'Descargar ZIP' : 'Descargar ZIP (local)' }}
-                                        </a>
-                                    @endif
-                                    @if ($run->error_message)
-                                        <span class="text-xs text-rose-600">{{ $run->error_message }}</span>
-                                    @endif
-                                </div>
-                            </div>
-                        @endforeach
-                    </div>
-                    @if ($attachmentRuns->contains(fn ($run) => in_array($run->status, ['pending', 'running'], true)))
-                        <p class="mt-2 text-[11px] text-gray-500">Actualizando estado automaticamente cada 8 segundos mientras haya procesos en curso.</p>
-                        <script>
-                            setTimeout(function () {
-                                window.location.reload();
-                            }, 8000);
-                        </script>
-                    @endif
-                @endif
-            </div>
-
             <div class="manage-shell shadow-sm p-4 sm:p-6">
                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -700,22 +603,28 @@
                         <button
                             type="button"
                             @click="toggleOnlyPendingGlobal()"
+                            :aria-pressed="onlyPendingGlobal ? 'true' : 'false'"
                             class="px-2 py-1 rounded border text-xs transition"
                             :class="onlyPendingGlobal ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'">
-                            Solo pendientes (Global)
+                            Solo pendientes
                         </button>
                         <a href="{{ route('projects.manage.legacy', $project) }}" class="px-2 py-1 rounded border border-gray-300 bg-white text-xs text-gray-600 hover:bg-gray-50">
                             Ver versión anterior
                         </a>
                         <div class="text-sm text-gray-600">
                             <span class="font-semibold text-gray-800">Avance general:</span>
-                            {{ $overallPercent }}% ({{ $folderProgress ? array_sum(array_column($folderProgress, 'done')) : 0 }} de {{ $folderProgress ? array_sum(array_column($folderProgress, 'total')) : 0 }})
+                            {{ $overallPercent }}% · {{ (int) ($overallProgress['done'] ?? 0) }} de {{ (int) ($overallProgress['total'] ?? 0) }} documentos
                         </div>
                     </div>
                 </div>
+                @php
+                    $overallProgressTone = $overallPercent >= 80
+                        ? 'success'
+                        : ($overallPercent >= 40 ? 'warning' : 'danger');
+                @endphp
                 <div class="mb-4">
                     <div class="h-1.5 w-44 rounded-full bg-gray-200">
-                        <div class="h-1.5 rounded-full bg-emerald-500" style="width: {{ $overallPercent }}%"></div>
+                        <div class="overall-progress-fill--{{ $overallProgressTone }} h-1.5 rounded-full" style="width: {{ $overallPercent }}%"></div>
                     </div>
                 </div>
 
@@ -728,7 +637,7 @@
                         <aside class="pane pane-split manage-left p-3">
                             <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
                                 <div class="text-[11px] uppercase tracking-wide text-gray-500">Seccion</div>
-                                <div class="text-sm font-semibold text-gray-800">Grupos de requisitos (01-05)</div>
+                                <div class="text-sm font-semibold text-gray-800">Grupos de requisitos</div>
                             </div>
                             <div class="pane-body px-1 py-1 space-y-3">
                                 <template x-for="group in groups" :key="group.code">
@@ -875,7 +784,12 @@
                                                     @csrf
                                                     <div>
                                                         <label class="text-xs font-medium text-gray-600">Cargar evidencias</label>
-                                                        <input type="file" name="archivos[]" multiple :accept="currentRequirement().upload_accept || null" class="mt-1 block w-full text-xs text-gray-700">
+                                                        <input type="file" name="archivos[]" :multiple="!currentRequirement().requires_license_permit_classification" :accept="currentRequirement().upload_accept || null" class="mt-1 block w-full text-xs text-gray-700">
+                                                        <select x-show="currentRequirement().requires_license_permit_classification" name="license_permit_status" class="mt-2 block w-full rounded-md border-gray-300 text-xs">
+                                                            <option value="">Clasificar documento...</option>
+                                                            <option value="application">Solicitud o radicado</option>
+                                                            <option value="issued">Licencia o permiso expedido</option>
+                                                        </select>
                                                     </div>
                                                     <button type="submit" class="w-full h-9 rounded-md bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">
                                                         Subir

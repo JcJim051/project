@@ -29,6 +29,7 @@ class ManageProjectBank extends Page
         $this->record->loadMissing(['producto', 'sectores', 'municipios', 'formulador', 'estructurador']);
 
         $this->viewData = [
+            'bankPageMode' => 'structure',
             'project' => $this->record,
             'profile' => $service->profileFor($this->record),
             'signatories' => $service->signatoriesFor($this->record),
@@ -57,6 +58,6 @@ class ManageProjectBank extends Page
     {
         $name = $this->record?->nombre ?: 'Proyecto';
 
-        return 'Generar documentos del banco: ' . $name;
+        return 'Documentos del banco para estructuración: '.$name;
     }
 }

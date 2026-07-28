@@ -3,13 +3,175 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Models\ProjectBankRequest;
+use App\Models\ProjectWorkflowStep;
+use App\Models\RequirementEvidence;
+use App\Services\GoogleDriveService;
 use App\Services\ProjectBankExcelService;
+use App\Services\ProjectBankRequestService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use ZipArchive;
 
 class ProjectBankController extends Controller
 {
+    public function storeBankRequest(
+        Request $request,
+        Project $project,
+        ProjectBankRequestService $service,
+        GoogleDriveService $drive
+    ) {
+        $this->authorizeProjectAccess($request, $project, true);
+
+        $data = $request->validate([
+            'variant' => ['required', 'in:obra,inter,apoyo'],
+            'generation_type' => ['required', 'in:initial,update'],
+            'update_reason' => ['nullable', 'required_if:generation_type,update', 'string', 'max:2000'],
+            'request_date' => ['required', 'date'],
+            'recipient_salutation' => ['nullable', 'string', 'max:60'],
+            'recipient_name' => ['required', 'string', 'max:255'],
+            'recipient_title' => ['required', 'string', 'max:255'],
+            'recipient_entity' => ['required', 'string', 'max:255'],
+            'subject' => ['required', 'string', 'max:500'],
+            'expense_object' => ['required', 'string', 'max:4000'],
+            'value_to_certify' => ['required', 'numeric', 'min:0'],
+            'beneficiaries_total' => ['required', 'integer', 'min:0'],
+            'beneficiaries_rural' => ['required', 'integer', 'min:0'],
+            'beneficiaries_urban' => ['required', 'integer', 'min:0'],
+            'beneficiary_description' => ['required', 'string', 'max:5000'],
+            'other_results' => ['required', 'string', 'max:5000'],
+            'budget_tracer' => ['required', 'in:narp,indigenas,mujer,no_aplica'],
+            'differential' => ['nullable', 'array', 'max:4'],
+            'differential.*' => ['array'],
+            'differential.*.*' => ['nullable', 'integer', 'min:0'],
+            'pertinence' => ['required', 'string', 'max:10000'],
+            'legal_framework' => ['required', 'string', 'max:15000'],
+            'market_study' => ['required', 'string', 'max:15000'],
+            'observations' => ['nullable', 'string', 'max:10000'],
+        ], [
+            'update_reason.required_if' => 'Indica el motivo de la actualización.',
+            'value_to_certify.required' => 'Indica el valor que se solicita certificar.',
+        ]);
+
+        try {
+            $generated = $service->create($project, $data, $request->user()->id);
+        } catch (\Throwable $exception) {
+            return back()->withErrors(['bank_request' => $exception->getMessage()])->withInput();
+        }
+
+        /** @var ProjectBankRequest $record */
+        $record = $generated['record'];
+        $path = $generated['path'];
+        if ($project->drive_folder_id && $drive->isAuthorized($request->user()->id)) {
+            try {
+                $uploaded = $drive->uploadLocalFileToFolder(
+                    (string) $project->drive_folder_id,
+                    $generated['filename'],
+                    $path,
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    $request->user()->id
+                );
+                $record->forceFill([
+                    'drive_folder_id' => $project->drive_folder_id,
+                    'drive_file_id' => $uploaded['id'] ?? null,
+                ])->save();
+                $this->linkGeneratedRequestToWorkflow(
+                    $project,
+                    $record,
+                    $uploaded,
+                    $request->user()->id
+                );
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        }
+
+        register_shutdown_function(static function () use ($path): void {
+            File::deleteDirectory(dirname($path));
+        });
+
+        return response()->download($path, $generated['filename'])->deleteFileAfterSend(true);
+    }
+
+    public function downloadBankRequest(
+        Request $request,
+        Project $project,
+        ProjectBankRequest $bankRequest,
+        GoogleDriveService $drive
+    ) {
+        abort_unless((int) $bankRequest->project_id === (int) $project->id, 404);
+        $this->authorizeProjectAccess($request, $project, false);
+        abort_unless($bankRequest->drive_file_id, 404, 'La versión histórica no tiene archivo disponible en Drive.');
+
+        $tmpDir = storage_path('app/tmp/bank_requests/downloads/'.Str::uuid());
+        File::ensureDirectoryExists($tmpDir);
+        $path = $tmpDir.'/'.($bankRequest->output_filename ?: 'solicitud-fbs01.xlsx');
+        $drive->downloadFile((string) $bankRequest->drive_file_id, $path, $request->user()->id);
+        register_shutdown_function(static function () use ($tmpDir): void {
+            File::deleteDirectory($tmpDir);
+        });
+
+        return response()->download($path, basename($path))->deleteFileAfterSend(true);
+    }
+
+    private function linkGeneratedRequestToWorkflow(
+        Project $project,
+        ProjectBankRequest $bankRequest,
+        array $uploaded,
+        int $userId
+    ): void {
+        $step = ProjectWorkflowStep::query()
+            ->where('slug', 'solicitud-del-banco-de-programas-y-proyectos')
+            ->whereHas('stage', fn ($query) => $query
+                ->where('funding_source', $project->funding_source ?: 'sgr')
+                ->where('is_active', true))
+            ->with('requirementLinks.requirement')
+            ->first();
+        $requirement = $step?->requirementLinks->first()?->requirement;
+        $driveFileId = (string) ($uploaded['id'] ?? '');
+        if (! $requirement || $driveFileId === '') {
+            return;
+        }
+
+        $project->requisitos()->syncWithoutDetaching([
+            $requirement->id => ['activated_at' => now()],
+        ]);
+        RequirementEvidence::query()->updateOrCreate(
+            [
+                'project_id' => $project->id,
+                'drive_file_id' => $driveFileId,
+            ],
+            [
+                'requirement_id' => $requirement->id,
+                'drive_file_name' => $bankRequest->output_filename,
+                'drive_mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'drive_modified_time' => now(),
+                'drive_folder_name' => $requirement->carpeta,
+                'source' => 'generated_bank_request',
+                'linked_by_user_id' => $userId,
+                'linked_at' => now(),
+                'link_note' => 'Solicitud F-BS-01 '.strtoupper($bankRequest->variant).' V'.$bankRequest->version_number,
+                'in_drive' => true,
+            ]
+        );
+    }
+
+    private function authorizeProjectAccess(Request $request, Project $project, bool $mutate): void
+    {
+        $user = $request->user();
+        $hasGlobalAccess = (bool) ($user?->isAdminUser() || $user?->hasAnyRole(['director', 'formulador_maestro']));
+        $isAssigned = $user && in_array((int) $user->id, [
+            (int) $project->formulador_id,
+            (int) $project->estructurador_id,
+        ], true);
+
+        abort_unless($hasGlobalAccess || $isAssigned, 403);
+        if ($mutate) {
+            abort_unless($user?->canMutateProjects(), 403);
+        }
+    }
+
     public function updateProfile(Request $request, Project $project, ProjectBankExcelService $service)
     {
         $data = $request->validate([
@@ -136,7 +298,7 @@ class ProjectBankController extends Controller
             default => 'BANCO',
         };
 
-        $name = Str::slug((string) $project->nombre, '_') . '_' . $suffix . '.xlsx';
+        $name = Str::slug((string) $project->nombre, '_').'_'.$suffix.'.xlsx';
 
         return response()->download($path, $name)->deleteFileAfterSend(true);
     }
@@ -149,8 +311,8 @@ class ProjectBankController extends Controller
             mkdir($tmpDir, 0775, true);
         }
 
-        $zipPath = $tmpDir . '/' . Str::uuid()->toString() . '.zip';
-        $zip = new ZipArchive();
+        $zipPath = $tmpDir.'/'.Str::uuid()->toString().'.zip';
+        $zip = new ZipArchive;
         $zip->open($zipPath, ZipArchive::CREATE);
         $generated = [];
 
@@ -163,7 +325,7 @@ class ProjectBankController extends Controller
                     'bank_cronograma' => 'F-PE-25',
                     default => 'BANCO',
                 };
-                $zip->addFile($path, Str::slug((string) $project->nombre, '_') . '_' . $suffix . '.xlsx');
+                $zip->addFile($path, Str::slug((string) $project->nombre, '_').'_'.$suffix.'.xlsx');
                 $generated[] = $path;
             }
         } catch (\RuntimeException $e) {
@@ -176,6 +338,7 @@ class ProjectBankController extends Controller
                     @unlink($path);
                 }
             }
+
             return back()->withErrors(['bank_excel' => $e->getMessage()]);
         }
 
@@ -187,7 +350,7 @@ class ProjectBankController extends Controller
             }
         }
 
-        return response()->download($zipPath, Str::slug((string) $project->nombre, '_') . '_banco_excel.zip')
+        return response()->download($zipPath, Str::slug((string) $project->nombre, '_').'_banco_excel.zip')
             ->deleteFileAfterSend(true);
     }
 }

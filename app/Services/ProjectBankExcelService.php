@@ -10,7 +10,6 @@ use App\Models\ProjectBankSignatory;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class ProjectBankExcelService
@@ -204,18 +203,18 @@ class ProjectBankExcelService
                     'actividad' => (string) ($row['actividad'] ?? ''),
                     'producto_mga' => $this->nullableString($row['producto_mga'] ?? null),
                     'valor_actividad' => $this->nullableDecimal($row['valor_actividad'] ?? null),
-                    'ene' => !empty($row['ene']),
-                    'feb' => !empty($row['feb']),
-                    'mar' => !empty($row['mar']),
-                    'abr' => !empty($row['abr']),
-                    'may' => !empty($row['may']),
-                    'jun' => !empty($row['jun']),
-                    'jul' => !empty($row['jul']),
-                    'ago' => !empty($row['ago']),
-                    'sep' => !empty($row['sep']),
-                    'oct' => !empty($row['oct']),
-                    'nov' => !empty($row['nov']),
-                    'dic' => !empty($row['dic']),
+                    'ene' => ! empty($row['ene']),
+                    'feb' => ! empty($row['feb']),
+                    'mar' => ! empty($row['mar']),
+                    'abr' => ! empty($row['abr']),
+                    'may' => ! empty($row['may']),
+                    'jun' => ! empty($row['jun']),
+                    'jul' => ! empty($row['jul']),
+                    'ago' => ! empty($row['ago']),
+                    'sep' => ! empty($row['sep']),
+                    'oct' => ! empty($row['oct']),
+                    'nov' => ! empty($row['nov']),
+                    'dic' => ! empty($row['dic']),
                 ]);
             }
             $this->syncFinancingWithActivities($project);
@@ -238,14 +237,14 @@ class ProjectBankExcelService
             $missing[] = 'Nombre del proyecto';
         }
 
-        if ($project->funding_source === 'sgr' && trim((string) $project->bipin) === '') {
-            $missing[] = 'BPIN (obligatorio para fuente SGR)';
+        if (trim((string) $project->id_proyecto) === '') {
+            $missing[] = 'ID del proyecto';
         }
 
         foreach (['elaboro', 'aprobo'] as $role) {
             $item = $signatories->firstWhere('role', $role);
             if (! $item || trim((string) $item->nombre) === '') {
-                $missing[] = 'Firmante ' . $role;
+                $missing[] = 'Firmante '.$role;
             }
         }
 
@@ -261,12 +260,12 @@ class ProjectBankExcelService
         $this->ensureSeeded($project);
         $missing = $this->missingRequiredFields($project);
         if (! empty($missing)) {
-            throw new \RuntimeException('Faltan datos requeridos: ' . implode(', ', $missing));
+            throw new \RuntimeException('Faltan datos requeridos: '.implode(', ', $missing));
         }
 
         $templatePath = (string) data_get(config('bank_excel_map.template_paths'), $templateType);
         if ($templatePath === '' || ! is_file($templatePath)) {
-            throw new \RuntimeException('No se encontró la plantilla base para ' . $templateType);
+            throw new \RuntimeException('No se encontró la plantilla base para '.$templateType);
         }
 
         $sheetName = (string) data_get(config('bank_excel_map.sheet_names'), $templateType);
@@ -295,7 +294,7 @@ class ProjectBankExcelService
         $this->setIfCell($sheet, $cells, 'vigencia', $vigencia);
 
         if ($templateType === 'bank_cronograma') {
-            $this->setIfCell($sheet, $cells, 'fecha_firma', 'La presente se firma el día ' . Carbon::now()->format('d/m/Y'));
+            $this->setIfCell($sheet, $cells, 'fecha_firma', 'La presente se firma el día '.Carbon::now()->format('d/m/Y'));
         }
 
         $elaboro = $signatories->get('elaboro');
@@ -379,7 +378,7 @@ class ProjectBankExcelService
         }
 
         $safeProject = Str::slug((string) $project->nombre, '_');
-        $output = $tmpDir . '/' . $safeProject . '_' . $templateType . '_' . now()->format('Ymd_His') . '.xlsx';
+        $output = $tmpDir.'/'.$safeProject.'_'.$templateType.'_'.now()->format('Ymd_His').'.xlsx';
         $this->sanitizeDefinedNames($spreadsheet);
         $writer = IOFactory::createWriter($spreadsheet, 'Xlsx');
         $writer->save($output);
@@ -431,7 +430,7 @@ class ProjectBankExcelService
             $activityOrders[] = (int) $activity->orden;
             $target = $existing->get((int) $activity->orden);
             if (! $target) {
-                $target = new ProjectBankFinancingRow();
+                $target = new ProjectBankFinancingRow;
                 $target->project_id = $project->id;
                 $target->orden = (int) $activity->orden;
             }
@@ -525,11 +524,13 @@ class ProjectBankExcelService
 
         $existing = (string) $sheet->getCell($cell)->getValue();
         if (preg_match('/^(.*?:)\s*.*$/u', $existing, $m)) {
-            $sheet->setCellValue($cell, $this->sanitizeExcelValue($m[1] . ' ' . $newValue));
+            $sheet->setCellValue($cell, $this->sanitizeExcelValue($m[1].' '.$newValue));
+
             return;
         }
         if (preg_match('/^(\s+)/u', $existing, $m)) {
-            $sheet->setCellValue($cell, $this->sanitizeExcelValue($m[1] . $newValue));
+            $sheet->setCellValue($cell, $this->sanitizeExcelValue($m[1].$newValue));
+
             return;
         }
 
@@ -542,7 +543,7 @@ class ProjectBankExcelService
         if (! $col) {
             return;
         }
-        $sheet->setCellValue($col . $row, $this->sanitizeExcelValue($value));
+        $sheet->setCellValue($col.$row, $this->sanitizeExcelValue($value));
     }
 
     private function clearTableRows($sheet, array $columns, int $startRow, int $maxRows): void
@@ -554,7 +555,7 @@ class ProjectBankExcelService
         $endRow = $startRow + $maxRows - 1;
         foreach (array_unique(array_values($columns)) as $col) {
             for ($r = $startRow; $r <= $endRow; $r++) {
-                $sheet->setCellValue($col . $r, null);
+                $sheet->setCellValue($col.$r, null);
             }
         }
     }
@@ -570,14 +571,14 @@ class ProjectBankExcelService
 
     private function sanitizeDefinedNames($spreadsheet): void
     {
-        // Las plantillas de Banco están generando warnings de recuperación por "Rango con nombre"
-        // en workbook.xml. Para evitar corrupción al abrir en Excel, eliminamos todos los defined names
-        // del archivo exportado.
         foreach ($spreadsheet->getDefinedNames() as $definedName) {
-            $spreadsheet->removeDefinedName(
-                $definedName->getName(),
-                $definedName->getScope()
-            );
+            $value = (string) $definedName->getValue();
+            if (str_contains($value, '#REF!') || preg_match('/\\[[^\\]]+\\]/', $value)) {
+                $spreadsheet->removeDefinedName(
+                    $definedName->getName(),
+                    $definedName->getScope()
+                );
+            }
         }
     }
 
@@ -585,10 +586,10 @@ class ProjectBankExcelService
     {
         $value = trim((string) $value);
         if ($value === '') {
-            return $label . ':';
+            return $label.':';
         }
 
-        return $label . ': ' . $value;
+        return $label.': '.$value;
     }
 
     private function extractPilarNumber(?string $value): ?string
@@ -600,6 +601,7 @@ class ProjectBankExcelService
         if (preg_match('/\b(\d+)\b/', $text, $m)) {
             return $m[1];
         }
+
         return $text;
     }
 
@@ -608,6 +610,7 @@ class ProjectBankExcelService
         if (preg_match('/(\d+)/', $cell, $m)) {
             return (int) $m[1];
         }
+
         return 0;
     }
 

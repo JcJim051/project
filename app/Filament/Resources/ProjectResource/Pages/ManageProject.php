@@ -34,6 +34,7 @@ class ManageProject extends Page
 
         if ($response instanceof RedirectResponse) {
             $this->redirect($response->getTargetUrl(), navigate: false);
+
             return;
         }
 
@@ -49,6 +50,7 @@ class ManageProject extends Page
                 'syncReport' => $data['syncReport'] ?? null,
                 'renumerated' => $data['renumerated'] ?? null,
                 'overallPercent' => $data['overallPercent'] ?? null,
+                'overallProgress' => $data['overallProgress'] ?? ['done' => 0, 'total' => 0, 'percent' => 0],
                 'folderProgress' => $data['folderProgress'] ?? null,
                 'manageSections' => $data['manageSections'] ?? null,
                 'topGroupProgress' => $data['topGroupProgress'] ?? null,
@@ -63,6 +65,9 @@ class ManageProject extends Page
                 'canAuthorizeTransfer' => $data['canAuthorizeTransfer'] ?? false,
                 'canAcknowledgeTransfer' => $data['canAcknowledgeTransfer'] ?? false,
                 'transferReceiptStates' => $data['transferReceiptStates'] ?? [],
+                'workflowStages' => $data['workflowStages'] ?? collect(),
+                'canValidateWorkflow' => $data['canValidateWorkflow'] ?? false,
+                'canOverrideWorkflowApplicability' => $data['canOverrideWorkflowApplicability'] ?? false,
                 'mgaUrl' => $this->getMgaUrl(),
             ];
         }
@@ -73,10 +78,22 @@ class ManageProject extends Page
         return $this->viewData;
     }
 
+    public function getHeader(): ?View
+    {
+        return view(
+            'filament.resources.project-resource.pages.partials.manage-project-header',
+            array_merge($this->viewData, [
+                'breadcrumbs' => filament()->hasBreadcrumbs() ? $this->getBreadcrumbs() : [],
+                'heading' => $this->getHeading(),
+            ]),
+        );
+    }
+
     public function getHeading(): string|HtmlString
     {
         $name = $this->record?->nombre_clave ?: $this->record?->nombre ?: 'Proyecto';
-        return 'Gestionar: ' . e($name);
+
+        return 'Gestionar: '.e($name);
     }
 
     public function getManageUrl(): string
@@ -101,11 +118,11 @@ class ManageProject extends Page
 
         if ($alternativeId !== '') {
             return 'https://mgaweb.dnp.gov.co/Preparation/PE05?ProjectId='
-                . urlencode($projectId)
-                . '&AlternativeId='
-                . urlencode($alternativeId);
+                .urlencode($projectId)
+                .'&AlternativeId='
+                .urlencode($alternativeId);
         }
 
-        return 'https://mgaweb.dnp.gov.co/Identification/Id01?ProjectId=' . urlencode($projectId);
+        return 'https://mgaweb.dnp.gov.co/Identification/Id01?ProjectId='.urlencode($projectId);
     }
 }

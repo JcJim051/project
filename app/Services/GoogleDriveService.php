@@ -31,7 +31,7 @@ class GoogleDriveService
 
     public function isAuthorized(?int $userId = null): bool
     {
-        if (!$this->isConfigured()) {
+        if (! $this->isConfigured()) {
             return false;
         }
 
@@ -54,14 +54,14 @@ class GoogleDriveService
         $token = $client->fetchAccessTokenWithAuthCode($authCode);
         if (isset($token['error'])) {
             $description = (string) ($token['error_description'] ?? $token['error']);
-            throw new \RuntimeException('OAuth Google rechazó el código: ' . $description);
+            throw new \RuntimeException('OAuth Google rechazó el código: '.$description);
         }
         $this->storeToken($token, $userId);
     }
 
     public function syncProjectRequirements(Project $project, Collection $requirements, ?int $userId = null): array
     {
-        if (!$project->drive_folder_id) {
+        if (! $project->drive_folder_id) {
             return [
                 'total' => 0,
                 'matched' => [],
@@ -79,20 +79,20 @@ class GoogleDriveService
             $folderId = $resolved['id'];
             $folderLabel = $resolved['label'];
 
-            if (!array_key_exists($folderLabel, $targetFolders) || ($targetFolders[$folderLabel] === null && $folderId)) {
+            if (! array_key_exists($folderLabel, $targetFolders) || ($targetFolders[$folderLabel] === null && $folderId)) {
                 $targetFolders[$folderLabel] = $folderId;
             }
 
-            if (!$folderId) {
+            if (! $folderId) {
                 continue;
             }
 
-            if (!$folderLabelsById->has($folderId)) {
+            if (! $folderLabelsById->has($folderId)) {
                 $folderLabelsById->put($folderId, collect());
             }
             $folderLabelsById->get($folderId)->push($folderLabel);
 
-            if (!$requirementMapByFolderId->has($folderId)) {
+            if (! $requirementMapByFolderId->has($folderId)) {
                 $requirementMapByFolderId->put($folderId, collect());
             }
 
@@ -112,6 +112,7 @@ class GoogleDriveService
                 $folderFiles = $this->listFilesInFolder($folderId, $userId)->map(function ($file) use ($folderId, $folderLabel) {
                     $file['rootFolderId'] = $folderId;
                     $file['rootFolder'] = $folderLabel;
+
                     return $file;
                 });
                 $filesByFolder = $filesByFolder->merge($folderFiles);
@@ -158,7 +159,7 @@ class GoogleDriveService
                 ->where('project_id', $project->id)
                 ->where('drive_file_id', $file['id'] ?? null)
                 ->first();
-            if (!$matchedRequirement) {
+            if (! $matchedRequirement) {
                 if ($existing) {
                     $existing->forceFill([
                         'drive_file_name' => $fileName,
@@ -172,6 +173,7 @@ class GoogleDriveService
                     'normalized' => $normalizedFile,
                     'folder' => $folderName,
                 ];
+
                 continue;
             }
 
@@ -188,9 +190,10 @@ class GoogleDriveService
                 $matched[] = [
                     'file' => $fileName,
                     'normalized' => $normalizedFile,
-                    'requirement' => $existingReq?->nombre_documento ?? $existingReq?->requisito ?? ('ID ' . $existing->requirement_id),
+                    'requirement' => $existingReq?->nombre_documento ?? $existingReq?->requisito ?? ('ID '.$existing->requirement_id),
                     'folder' => $folderName,
                 ];
+
                 continue;
             }
 
@@ -226,14 +229,20 @@ class GoogleDriveService
         ];
     }
 
-    public function uploadEvidence(Project $project, Requirement $requirement, UploadedFile $file, string $targetName, ?int $userId = null): RequirementEvidence
-    {
+    public function uploadEvidence(
+        Project $project,
+        Requirement $requirement,
+        UploadedFile $file,
+        string $targetName,
+        ?int $userId = null,
+        ?string $licensePermitStatus = null
+    ): RequirementEvidence {
         $drive = $this->drive($userId);
 
         $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, true);
         $folderId = $resolved['id'] ?? null;
-        if (!$folderId) {
-            throw new \RuntimeException('No se pudo resolver la carpeta destino en Drive: ' . ($resolved['label'] ?? $requirement->carpeta));
+        if (! $folderId) {
+            throw new \RuntimeException('No se pudo resolver la carpeta destino en Drive: '.($resolved['label'] ?? $requirement->carpeta));
         }
 
         $driveFile = new DriveFile([
@@ -248,7 +257,7 @@ class GoogleDriveService
             'fields' => 'id,name,mimeType,modifiedTime',
         ]);
 
-        return RequirementEvidence::create([
+        return RequirementEvidence::create(array_merge([
             'project_id' => $project->id,
             'requirement_id' => $requirement->id,
             'drive_file_id' => $created->id,
@@ -258,9 +267,12 @@ class GoogleDriveService
             'drive_folder_name' => $requirement->carpeta,
             'source' => 'upload',
             'in_drive' => $this->isValidEvidence($created->name, $created->mimeType, $requirement),
-        ]);
+        ], app(LicensePermitEvidenceService::class)->classificationAttributes(
+            $requirement,
+            $licensePermitStatus,
+            $userId
+        )));
     }
-
 
     public function createResumableUploadSession(
         Project $project,
@@ -272,8 +284,8 @@ class GoogleDriveService
     ): array {
         $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, true);
         $folderId = $resolved['id'] ?? null;
-        if (!$folderId) {
-            throw new \RuntimeException('No se pudo resolver la carpeta destino en Drive: ' . ($resolved['label'] ?? $requirement->carpeta));
+        if (! $folderId) {
+            throw new \RuntimeException('No se pudo resolver la carpeta destino en Drive: '.($resolved['label'] ?? $requirement->carpeta));
         }
 
         $client = $this->client($userId);
@@ -308,7 +320,8 @@ class GoogleDriveService
         Requirement $requirement,
         string $driveFileId,
         ?int $userId = null,
-        ?string $note = null
+        ?string $note = null,
+        ?string $licensePermitStatus = null
     ): RequirementEvidence {
         $fileMeta = $this->getDriveFileMeta($driveFileId, $userId);
 
@@ -317,7 +330,7 @@ class GoogleDriveService
                 'project_id' => $project->id,
                 'drive_file_id' => (string) ($fileMeta['id'] ?? $driveFileId),
             ],
-            [
+            array_merge([
                 'requirement_id' => $requirement->id,
                 'drive_file_name' => (string) ($fileMeta['name'] ?? $driveFileId),
                 'drive_mime_type' => $fileMeta['mimeType'] ?? null,
@@ -328,13 +341,17 @@ class GoogleDriveService
                 'linked_at' => now(),
                 'link_note' => $note,
                 'in_drive' => $this->isValidEvidence((string) ($fileMeta['name'] ?? ''), $fileMeta['mimeType'] ?? null, $requirement),
-            ]
+            ], app(LicensePermitEvidenceService::class)->classificationAttributes(
+                $requirement,
+                $licensePermitStatus,
+                $userId
+            ))
         );
     }
 
     public function ensureProjectSubfolder(Project $project, string $folderName, ?int $userId = null): ?string
     {
-        if (!$project->drive_folder_id) {
+        if (! $project->drive_folder_id) {
             return null;
         }
 
@@ -355,7 +372,7 @@ class GoogleDriveService
     {
         $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, false);
         $folderId = $resolved['id'] ?? null;
-        if (!$folderId) {
+        if (! $folderId) {
             return [
                 'folder_label' => $resolved['label'] ?? ($requirement->carpeta ?: 'Sin carpeta'),
                 'items' => collect(),
@@ -381,7 +398,7 @@ class GoogleDriveService
     ): array {
         $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, false);
         $folderId = $resolved['id'] ?? null;
-        if (!$folderId) {
+        if (! $folderId) {
             return [
                 'folder_label' => $resolved['label'] ?? ($requirement->carpeta ?: 'Sin carpeta'),
                 'items' => collect(),
@@ -394,6 +411,7 @@ class GoogleDriveService
             $needle = Str::lower(Str::ascii(trim($query)));
             $items = $items->filter(function (array $file) use ($needle) {
                 $name = Str::lower(Str::ascii((string) ($file['name'] ?? '')));
+
                 return str_contains($name, $needle);
             })->values();
         }
@@ -402,7 +420,8 @@ class GoogleDriveService
             $ext = Str::lower(ltrim(trim($extension), '.'));
             $items = $items->filter(function (array $file) use ($ext) {
                 $name = Str::lower((string) ($file['name'] ?? ''));
-                return Str::endsWith($name, '.' . $ext);
+
+                return Str::endsWith($name, '.'.$ext);
             })->values();
         }
 
@@ -432,7 +451,7 @@ class GoogleDriveService
         }
 
         $rootFolderId = $this->resolvedStandardRequirementFolder($project, $rootFolderName, $userId, false);
-        if (!$rootFolderId) {
+        if (! $rootFolderId) {
             return [
                 'folder_label' => $rootFolderName,
                 'items' => collect(),
@@ -461,8 +480,9 @@ class GoogleDriveService
         } else {
             foreach ($targets as $targetName) {
                 $subfolderId = $this->cachedChildFolderId($project, $rootFolderId, $targetName, $userId, false);
-                if (!$subfolderId) {
+                if (! $subfolderId) {
                     $missingFolders[] = $targetName;
+
                     continue;
                 }
 
@@ -474,6 +494,7 @@ class GoogleDriveService
                 $folderItems = $this->listFilesRecursively($subfolderId, $userId)
                     ->map(function (array $file) use ($targetName) {
                         $file['matched_subfolder'] = $targetName;
+
                         return $file;
                     });
 
@@ -485,7 +506,8 @@ class GoogleDriveService
             $ext = Str::lower(ltrim(trim($extension), '.'));
             $items = $items->filter(function (array $file) use ($ext) {
                 $name = Str::lower((string) ($file['name'] ?? ''));
-                return Str::endsWith($name, '.' . $ext);
+
+                return Str::endsWith($name, '.'.$ext);
             })->values();
         }
 
@@ -520,14 +542,15 @@ class GoogleDriveService
         Requirement $requirement,
         array $fileMeta,
         ?int $userId = null,
-        ?string $note = null
+        ?string $note = null,
+        ?string $licensePermitStatus = null
     ): RequirementEvidence {
         return RequirementEvidence::updateOrCreate(
             [
                 'project_id' => $project->id,
                 'drive_file_id' => (string) ($fileMeta['id'] ?? ''),
             ],
-            [
+            array_merge([
                 'requirement_id' => $requirement->id,
                 'drive_file_name' => (string) ($fileMeta['name'] ?? 'archivo'),
                 'drive_mime_type' => $fileMeta['mimeType'] ?? null,
@@ -538,10 +561,13 @@ class GoogleDriveService
                 'linked_at' => now(),
                 'link_note' => $note,
                 'in_drive' => $this->isValidEvidence((string) ($fileMeta['name'] ?? ''), $fileMeta['mimeType'] ?? null, $requirement),
-            ]
+            ], app(LicensePermitEvidenceService::class)->classificationAttributes(
+                $requirement,
+                $licensePermitStatus,
+                $userId
+            ))
         );
     }
-
 
     public function renameFile(string $fileId, string $newName, ?int $userId = null): array
     {
@@ -564,7 +590,7 @@ class GoogleDriveService
 
     public function renameRequirementFolderToPreferred(Project $project, Requirement $requirement, ?int $userId = null): ?array
     {
-        if (!$project->drive_folder_id || !$this->isEstudioRequirement($requirement)) {
+        if (! $project->drive_folder_id || ! $this->isEstudioRequirement($requirement)) {
             return null;
         }
 
@@ -575,7 +601,7 @@ class GoogleDriveService
 
         $resolved = $this->resolveRequirementFolder($project, $requirement, $userId, false);
         $folderId = $resolved['id'] ?? null;
-        if (!$folderId) {
+        if (! $folderId) {
             return null;
         }
 
@@ -620,12 +646,14 @@ class GoogleDriveService
                 $drive = $this->drive($userId);
                 $response = $drive->files->get($fileId, ['alt' => 'media']);
                 file_put_contents($destinationPath, $response->getBody()->getContents());
+
                 return;
             } catch (\Throwable $e) {
                 $lastException = $e;
                 if ($this->isGoogleWorkspaceDownloadError($e)) {
                     try {
                         $this->exportGoogleWorkspaceFile($fileId, $destinationPath, $userId);
+
                         return;
                     } catch (\Throwable $exportException) {
                         $lastException = $exportException;
@@ -633,7 +661,7 @@ class GoogleDriveService
                     }
                 }
 
-                if ($attempt >= $retries || !$this->isRetryableDriveError($e)) {
+                if ($attempt >= $retries || ! $this->isRetryableDriveError($e)) {
                     break;
                 }
                 sleep(min(6, $attempt * 2));
@@ -656,7 +684,7 @@ class GoogleDriveService
         $exportMimeType = $this->workspaceExportMimeType((string) ($meta['mimeType'] ?? ''));
 
         if ($exportMimeType === null) {
-            throw new \RuntimeException('El archivo de Google Workspace no tiene formato de exportacion soportado: ' . (string) ($meta['mimeType'] ?? 'desconocido'));
+            throw new \RuntimeException('El archivo de Google Workspace no tiene formato de exportacion soportado: '.(string) ($meta['mimeType'] ?? 'desconocido'));
         }
 
         $response = $drive->files->export($fileId, $exportMimeType, ['alt' => 'media']);
@@ -745,7 +773,7 @@ class GoogleDriveService
         $createdFoldersByName = [];
         foreach (collect($baseFolders)->map(fn ($item) => trim((string) $item))->filter()->unique()->values() as $folder) {
             $createdId = $this->createChildFolder($rootId, $folder, $userId);
-            if (!$createdId) {
+            if (! $createdId) {
                 throw new \RuntimeException("No se pudo crear la subcarpeta base '{$folder}' en Drive.");
             }
             $createdSubfolders[] = [
@@ -759,12 +787,12 @@ class GoogleDriveService
         if ($structuringFolderId) {
             foreach (collect($structuringFolders)->map(fn ($item) => trim((string) $item))->filter()->unique()->values() as $folder) {
                 $createdId = $this->createChildFolder($structuringFolderId, $folder, $userId);
-                if (!$createdId) {
+                if (! $createdId) {
                     throw new \RuntimeException("No se pudo crear la subcarpeta de estructuración '{$folder}' en Drive.");
                 }
                 $createdSubfolders[] = [
                     'id' => $createdId,
-                    'name' => '01 Estructuracion/' . $folder,
+                    'name' => '01 Estructuracion/'.$folder,
                 ];
             }
         }
@@ -772,7 +800,7 @@ class GoogleDriveService
         return [
             'id' => $rootId,
             'name' => (string) ($root->name ?? $name),
-            'url' => 'https://drive.google.com/drive/folders/' . $rootId,
+            'url' => 'https://drive.google.com/drive/folders/'.$rootId,
             'created_subfolders' => $createdSubfolders,
         ];
     }
@@ -784,15 +812,14 @@ class GoogleDriveService
         string $mimeType = 'application/octet-stream',
         ?int $userId = null,
         ?callable $onProgress = null
-    ): array
-    {
-        if (!is_file($localPath)) {
-            throw new \RuntimeException('No existe el archivo local para subir: ' . $localPath);
+    ): array {
+        if (! is_file($localPath)) {
+            throw new \RuntimeException('No existe el archivo local para subir: '.$localPath);
         }
 
         $size = filesize($localPath);
         if ($size === false || $size < 0) {
-            throw new \RuntimeException('No se pudo leer el tamano del archivo local: ' . $localPath);
+            throw new \RuntimeException('No se pudo leer el tamano del archivo local: '.$localPath);
         }
 
         $client = $this->client($userId);
@@ -817,14 +844,14 @@ class GoogleDriveService
             $status = false;
             $handle = fopen($localPath, 'rb');
             if ($handle === false) {
-                throw new \RuntimeException('No se pudo abrir archivo local para subir: ' . $localPath);
+                throw new \RuntimeException('No se pudo abrir archivo local para subir: '.$localPath);
             }
 
             try {
-                while (!$status && !feof($handle)) {
+                while (! $status && ! feof($handle)) {
                     $chunk = fread($handle, $chunkSize);
                     if ($chunk === false) {
-                        throw new \RuntimeException('Error leyendo bloque del archivo local: ' . $localPath);
+                        throw new \RuntimeException('Error leyendo bloque del archivo local: '.$localPath);
                     }
                     $status = $media->nextChunk($chunk);
                     if ($onProgress) {
@@ -836,7 +863,7 @@ class GoogleDriveService
                 fclose($handle);
             }
 
-            if (!$status) {
+            if (! $status) {
                 throw new \RuntimeException('La subida resumible no finalizo correctamente.');
             }
 
@@ -855,7 +882,7 @@ class GoogleDriveService
     {
         $oauth = $this->oauthCredentials();
 
-        $client = new Client();
+        $client = new Client;
         $client->setApplicationName('gestion-proyectos');
         $client->setClientId($oauth['client_id'] ?? null);
         $client->setClientSecret($oauth['client_secret'] ?? null);
@@ -872,7 +899,7 @@ class GoogleDriveService
         ]));
 
         $token = $this->loadToken($userId);
-        if (!$token) {
+        if (! $token) {
             if ($requireToken) {
                 throw new \RuntimeException('Drive no esta conectado. Reconecta Drive OAuth antes de consultar o descargar archivos.');
             }
@@ -883,7 +910,7 @@ class GoogleDriveService
         $client->setAccessToken($token);
         if ($client->isAccessTokenExpired()) {
             $refreshToken = $client->getRefreshToken() ?: ($token['refresh_token'] ?? null);
-            if (!$refreshToken) {
+            if (! $refreshToken) {
                 $this->forgetToken($userId);
                 throw new \RuntimeException('Token de Google expirado y sin refresh_token. Reconecta Drive OAuth.');
             }
@@ -895,7 +922,7 @@ class GoogleDriveService
                     throw new \RuntimeException($description);
                 }
 
-                if (!isset($refreshedToken['refresh_token']) && $refreshToken) {
+                if (! isset($refreshedToken['refresh_token']) && $refreshToken) {
                     $refreshedToken['refresh_token'] = $refreshToken;
                 }
 
@@ -932,7 +959,7 @@ class GoogleDriveService
 
             try {
                 $setting = DriveOAuthSetting::query()->latest('id')->first();
-                if (!$setting) {
+                if (! $setting) {
                     return $fallback;
                 }
 
@@ -957,11 +984,12 @@ class GoogleDriveService
     private function loadToken(?int $userId = null): ?array
     {
         $path = $this->tokenPath($userId);
-        if (!Storage::disk('local')->exists($path)) {
+        if (! Storage::disk('local')->exists($path)) {
             return null;
         }
 
         $raw = Storage::disk('local')->get($path);
+
         return json_decode($raw, true);
     }
 
@@ -977,7 +1005,6 @@ class GoogleDriveService
             Storage::disk('local')->delete($path);
         }
     }
-
 
     public function findDirectFileInFolderByName(string $folderId, string $fileName, ?int $userId = null, ?int $expectedSize = null): ?array
     {
@@ -1005,7 +1032,7 @@ class GoogleDriveService
             $file = $files->first();
         }
 
-        if (!$file) {
+        if (! $file) {
             return null;
         }
 
@@ -1080,7 +1107,7 @@ class GoogleDriveService
                 ]);
 
                 foreach ($response->files as $folder) {
-                    if (!isset($seenFolders[(string) $folder->id])) {
+                    if (! isset($seenFolders[(string) $folder->id])) {
                         $queue->push((string) $folder->id);
                     }
                 }
@@ -1162,10 +1189,12 @@ class GoogleDriveService
         $found = $this->findFolderIdByName($project->drive_folder_id, $folderName, $userId);
         if ($found) {
             Cache::put($cacheKey, $found, now()->addHours(12));
+
             return $found;
         }
 
         Cache::put($cacheKey, '__NONE__', now()->addMinutes(10));
+
         return null;
     }
 
@@ -1185,6 +1214,7 @@ class GoogleDriveService
         if ($fresh) {
             $cacheKey = "drive_folder:{$project->id}:{$normalized}";
             Cache::put($cacheKey, $fresh, now()->addHours(12));
+
             return $fresh;
         }
 
@@ -1195,17 +1225,18 @@ class GoogleDriveService
     {
         $baseFolderName = trim((string) ($requirement->carpeta ?: 'Sin carpeta'));
 
-        if (!$this->isEstudioRequirement($requirement)) {
+        if (! $this->isEstudioRequirement($requirement)) {
             $baseFolderId = $this->resolvedStandardRequirementFolder($project, $baseFolderName, $userId, $createStudyFolder);
-            if (!$baseFolderId) {
+            if (! $baseFolderId) {
                 return ['id' => null, 'label' => $baseFolderName];
             }
+
             return ['id' => $baseFolderId, 'label' => $baseFolderName];
         }
 
         $estudiosFolderName = $this->findEstudiosBaseFolderName($project, $userId) ?: '05 Estudios y Diseños';
         $estudiosFolderId = $this->resolvedFolderId($project, $estudiosFolderName, $userId);
-        if (!$estudiosFolderId) {
+        if (! $estudiosFolderId) {
             return ['id' => null, 'label' => $estudiosFolderName];
         }
 
@@ -1215,11 +1246,11 @@ class GoogleDriveService
         }
 
         $studyFolderId = $this->cachedChildFolderId($project, $estudiosFolderId, $studyName, $userId, $createStudyFolder);
-        if (!$studyFolderId) {
-            return ['id' => null, 'label' => $estudiosFolderName . ' / ' . $studyName];
+        if (! $studyFolderId) {
+            return ['id' => null, 'label' => $estudiosFolderName.' / '.$studyName];
         }
 
-        return ['id' => $studyFolderId, 'label' => $estudiosFolderName . ' / ' . $studyName];
+        return ['id' => $studyFolderId, 'label' => $estudiosFolderName.' / '.$studyName];
     }
 
     private function resolvedStandardRequirementFolder(Project $project, string $folderName, ?int $userId = null, bool $createIfMissing = false): ?string
@@ -1230,10 +1261,10 @@ class GoogleDriveService
         }
 
         $structuringFolderId = $this->findDirectChildFolderIdByName($project->drive_folder_id, '01 Estructuracion', $userId);
-        if (!$structuringFolderId && $createIfMissing) {
+        if (! $structuringFolderId && $createIfMissing) {
             $structuringFolderId = $this->createChildFolder($project->drive_folder_id, '01 Estructuracion', $userId);
         }
-        if (!$structuringFolderId) {
+        if (! $structuringFolderId) {
             return $this->cachedFolderId($project, $folderName, $userId);
         }
 
@@ -1243,7 +1274,7 @@ class GoogleDriveService
         }
 
         $parentFolderId = $this->cachedChildFolderId($project, $structuringFolderId, $parentFolderName, $userId, $createIfMissing);
-        if (!$parentFolderId) {
+        if (! $parentFolderId) {
             return null;
         }
 
@@ -1293,13 +1324,14 @@ class GoogleDriveService
         if (is_string($cached) && $cached !== '__NONE__') {
             return $cached;
         }
-        if ($cached === '__NONE__' && !$createIfMissing) {
+        if ($cached === '__NONE__' && ! $createIfMissing) {
             return null;
         }
 
         $found = $this->findDirectChildFolderIdByName($parentFolderId, $childFolderName, $userId);
         if ($found) {
             Cache::put($cacheKey, $found, now()->addHours(12));
+
             return $found;
         }
 
@@ -1307,11 +1339,13 @@ class GoogleDriveService
             $created = $this->createChildFolder($parentFolderId, $childFolderName, $userId);
             if ($created) {
                 Cache::put($cacheKey, $created, now()->addHours(12));
+
                 return $created;
             }
         }
 
         Cache::put($cacheKey, '__NONE__', now()->addMinutes(10));
+
         return null;
     }
 
@@ -1373,7 +1407,7 @@ class GoogleDriveService
 
     private function escapeDriveQueryValue(string $value): string
     {
-        return str_replace(["\\", "'"], ["\\\\", "\\'"], $value);
+        return str_replace(['\\', "'"], ['\\\\', "\\'"], $value);
     }
 
     private function listDriveFiles(Drive $drive, array $params)
@@ -1388,7 +1422,7 @@ class GoogleDriveService
                 return $drive->files->listFiles($params);
             } catch (\Throwable $e) {
                 $lastException = $e;
-                if ($attempt >= 3 || !$this->isRetryableDriveError($e)) {
+                if ($attempt >= 3 || ! $this->isRetryableDriveError($e)) {
                     break;
                 }
                 sleep($attempt * 2);
@@ -1409,6 +1443,7 @@ class GoogleDriveService
             ]);
 
             $created = $drive->files->create($folder, ['fields' => 'id']);
+
             return $created->id ?? null;
         } catch (\Throwable $e) {
             return null;
@@ -1435,7 +1470,7 @@ class GoogleDriveService
         }
 
         $requisito = trim((string) ($requirement->requisito ?? ''));
-        if ($requisito !== '' && !in_array(Str::upper($requisito), ['SI', 'NO'], true)) {
+        if ($requisito !== '' && ! in_array(Str::upper($requisito), ['SI', 'NO'], true)) {
             return $requisito;
         }
 
@@ -1452,7 +1487,7 @@ class GoogleDriveService
         }
 
         if (preg_match('/^\s*(5\.\d+)/', $code, $matches)) {
-            return trim($matches[1] . ' ' . $name);
+            return trim($matches[1].' '.$name);
         }
 
         return $name;
@@ -1463,6 +1498,7 @@ class GoogleDriveService
         $value = trim($value);
         $value = preg_replace('/^\s*[\d.]+[\s\-_]*/u', '', $value);
         $value = preg_replace('/\s+/', ' ', $value);
+
         return trim($value);
     }
 
@@ -1472,6 +1508,7 @@ class GoogleDriveService
         $value = Str::ascii($value);
         $value = Str::lower($value);
         $value = preg_replace('/\s+/', ' ', $value);
+
         return trim((string) $value);
     }
 
@@ -1543,6 +1580,7 @@ class GoogleDriveService
         $name = trim($name);
         $name = preg_replace('/\s+/', ' ', $name);
         $name = Str::ascii($name);
+
         return Str::lower(trim($name));
     }
 
@@ -1554,6 +1592,7 @@ class GoogleDriveService
         $name = preg_replace('/\s*\(\d+\)\s*$/u', '', $name);
         $name = preg_replace('/\s+/', ' ', $name);
         $name = Str::ascii($name);
+
         return Str::lower(trim($name));
     }
 

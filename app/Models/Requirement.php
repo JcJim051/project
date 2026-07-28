@@ -4,16 +4,22 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 
 class Requirement extends Model
 {
     use HasFactory;
 
     public const EVIDENCE_RULE_PDF = 'pdf';
+
     public const EVIDENCE_RULE_EXCEL = 'excel';
+
     public const EVIDENCE_RULE_POWERPOINT = 'powerpoint';
+
     public const EVIDENCE_RULE_KML = 'kml';
+
     public const EVIDENCE_RULE_PROJECT = 'project';
+
     public const EVIDENCE_RULE_ANY = 'cualquiera';
 
     protected $fillable = [
@@ -77,5 +83,18 @@ class Requirement extends Model
     public function children()
     {
         return $this->hasMany(self::class, 'parent_id');
+    }
+
+    public function workflowStepLinks()
+    {
+        return $this->hasMany(ProjectWorkflowStepRequirement::class);
+    }
+
+    public function requiresLicensePermitClassification(): bool
+    {
+        $folder = Str::lower(Str::ascii(trim((string) $this->carpeta)));
+        $folder = preg_replace('/\s+/', ' ', $folder);
+
+        return str_starts_with($folder, '04 licencias y permisos');
     }
 }

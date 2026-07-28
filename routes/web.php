@@ -78,6 +78,9 @@ Route::middleware([
     Route::get('/projects/{project}/manage', [ProjectManageController::class, 'show'])->name('projects.manage');
     Route::post('/projects/{project}/manage/renumber', [ProjectManageController::class, 'renumberUploads'])->name('projects.manage.renumber');
     Route::post('/projects/{project}/manage/custom-certifications', [ProjectManageController::class, 'storeCustomCertification'])->name('projects.manage.custom_certifications.store');
+    Route::post('/projects/{project}/workflow/{step}/validate', [ProjectManageController::class, 'validateWorkflowStep'])->name('projects.workflow.validate');
+    Route::delete('/projects/{project}/workflow/{step}/validate', [ProjectManageController::class, 'clearWorkflowStepValidation'])->name('projects.workflow.validation.clear');
+    Route::put('/projects/{project}/workflow/{step}/applicability', [ProjectManageController::class, 'updateWorkflowStepApplicability'])->name('projects.workflow.applicability');
     Route::post('/projects/{project}/manage/{requirement}', [ProjectManageController::class, 'upload'])->name('projects.manage.upload');
     Route::post('/projects/{project}/requirements/{requirement}/uploads/init', [DriveUploadSessionController::class, 'init'])->name('projects.requirements.uploads.init');
     Route::patch('/drive-upload-sessions/{session}/progress', [DriveUploadSessionController::class, 'progress'])->name('drive-upload-sessions.progress');
@@ -87,6 +90,7 @@ Route::middleware([
     Route::post('/drive-upload-sessions/{session}/verify', [DriveUploadSessionController::class, 'verify'])->name('drive-upload-sessions.verify');
     Route::get('/projects/{project}/drive/files', [ProjectDriveEvidenceController::class, 'listFiles'])->name('projects.drive.files');
     Route::post('/projects/{project}/requirements/{requirement}/link-drive-file', [ProjectDriveEvidenceController::class, 'linkFile'])->name('projects.requirements.link_drive_file');
+    Route::patch('/projects/{project}/requirements/{requirement}/drive-evidences/{evidence}/classification', [ProjectDriveEvidenceController::class, 'classify'])->name('projects.requirements.classify_evidence');
     Route::delete('/projects/{project}/requirements/{requirement}/drive-evidences/{evidence}', [ProjectDriveEvidenceController::class, 'unlinkFile'])->name('projects.requirements.unlink_drive_file');
     Route::delete('/projects/{project}/requirements/{requirement}/drive-evidences/{evidence}/file', [ProjectDriveEvidenceController::class, 'deleteDriveFile'])->name('projects.requirements.delete_drive_file');
     Route::post('/projects/{project}/requirements/link-drive-files-bulk', [ProjectDriveEvidenceController::class, 'linkFilesBulk'])->name('projects.requirements.link_drive_files_bulk');
@@ -119,6 +123,8 @@ Route::middleware([
     Route::put('/projects/{project}/bank/activities', [ProjectBankController::class, 'updateActivityRows'])->name('projects.bank.activities.update');
     Route::get('/projects/{project}/bank/download/{templateType}', [ProjectBankController::class, 'downloadExcel'])->name('projects.bank.download.excel');
     Route::get('/projects/{project}/bank/download-zip', [ProjectBankController::class, 'downloadZip'])->name('projects.bank.download.zip');
+    Route::post('/projects/{project}/bank/requests', [ProjectBankController::class, 'storeBankRequest'])->name('projects.bank.requests.store');
+    Route::get('/projects/{project}/bank/requests/{bankRequest}/download', [ProjectBankController::class, 'downloadBankRequest'])->name('projects.bank.requests.download');
 
     Route::get('/drive/settings', fn () => redirect('/panel/drive-oauth-settings'))->name('drive.settings.edit');
     Route::put('/drive/settings', [DriveSettingsController::class, 'update'])->name('drive.settings.update');

@@ -15,7 +15,7 @@ class AttachmentPackageService
 {
     public function generateAndUpload(AttachmentPackageRun $run): AttachmentPackageRun
     {
-        $workDir = storage_path('app/tmp/attachment-runs/' . $run->id);
+        $workDir = storage_path('app/tmp/attachment-runs/'.$run->id);
         try {
             $this->touchStage($run, 'Preparando proyecto', 5);
             $project = $run->project()->with('requisitos')->firstOrFail();
@@ -23,15 +23,15 @@ class AttachmentPackageService
 
             $this->touchStage($run, 'Resolviendo carpeta 02 Cargue', 12);
             $driveFolderId = $this->drive()->ensureProjectSubfolder($project, '02 Cargue', $userId);
-            if (!$driveFolderId) {
+            if (! $driveFolderId) {
                 throw new \RuntimeException('No se pudo resolver la carpeta 02 Cargue en Drive.');
             }
 
             $this->touchStage($run, 'Calculando version', 18);
             $versionMode = (string) data_get($run->meta, 'version_mode', 'next');
             $version = $this->resolvePackageVersion($driveFolderId, $userId, $versionMode);
-            $downloadDir = $workDir . '/downloads';
-            $outputDir = $workDir . '/output';
+            $downloadDir = $workDir.'/downloads';
+            $outputDir = $workDir.'/output';
             File::ensureDirectoryExists($downloadDir);
             File::ensureDirectoryExists($outputDir);
 
@@ -40,10 +40,10 @@ class AttachmentPackageService
             if (empty($documents)) {
                 throw new \RuntimeException('No fue posible descargar evidencias desde Drive para generar el paquete.');
             }
-            $projectBase = $this->sanitizeFileBase('Adjuntos ' . ($project->nombre ?: 'Proyecto'));
-            $zipFilename = $projectBase . ' V' . $version . '.zip';
-            $zipPath = $outputDir . '/' . $zipFilename;
-            $manifestPath = $workDir . '/manifest.json';
+            $projectBase = $this->sanitizeFileBase('Adjuntos '.($project->nombre ?: 'Proyecto'));
+            $zipFilename = $projectBase.' V'.$version.'.zip';
+            $zipPath = $outputDir.'/'.$zipFilename;
+            $manifestPath = $workDir.'/manifest.json';
 
             file_put_contents($manifestPath, json_encode([
                 'version_number' => $version,
@@ -65,7 +65,7 @@ class AttachmentPackageService
             $outputType = count($documents) === 1 ? 'pdf' : 'zip';
             if ($outputType === 'pdf') {
                 $outputFilename = (string) $generatedPdfs[0];
-                $outputPath = $outputDir . '/' . $outputFilename;
+                $outputPath = $outputDir.'/'.$outputFilename;
                 $mimeType = 'application/pdf';
                 $stageLabel = 'Subiendo PDF a Drive';
             } else {
@@ -107,7 +107,7 @@ class AttachmentPackageService
                     $overallPercent = 90 + (int) floor($detailPercent / 10);
                     $uploadedMb = round($uploadedBytes / 1048576, 1);
                     $totalMb = round($total / 1048576, 1);
-                    $label = $stageLabel . ' (' . $uploadedMb . 'MB/' . $totalMb . 'MB)';
+                    $label = $stageLabel.' ('.$uploadedMb.'MB/'.$totalMb.'MB)';
                     $this->touchStage($run, $label, $overallPercent, $detailPercent);
                 }
             );
@@ -161,6 +161,7 @@ class AttachmentPackageService
                         'group' => $section->parent?->name ?: '05 Estudios y Disenos',
                     ];
                 }
+
                 continue;
             }
 
@@ -227,7 +228,7 @@ class AttachmentPackageService
 
                 foreach ($studyGroups as $sequence => $group) {
                     $documentKey = $this->studyDocumentKey((string) $group['folder']);
-                    if (!$this->shouldGenerateDocument($documentKey, $selectedKeys)) {
+                    if (! $this->shouldGenerateDocument($documentKey, $selectedKeys)) {
                         continue;
                     }
                     $documentTitle = $this->studyDocumentTitle((string) $group['folder'], $sequence + 1);
@@ -255,11 +256,12 @@ class AttachmentPackageService
                         'loose_files_added_count' => 0,
                     ];
                 }
+
                 continue;
             }
 
             $documentKey = $this->sectionDocumentKey($section);
-            if (!$this->shouldGenerateDocument($documentKey, $selectedKeys)) {
+            if (! $this->shouldGenerateDocument($documentKey, $selectedKeys)) {
                 continue;
             }
 
@@ -276,7 +278,7 @@ class AttachmentPackageService
                 $directRequirements,
                 $evidencesByRequirement,
                 $usedEvidenceIds,
-                fn ($evidence): bool => !$this->isEditableEvidence($evidence)
+                fn ($evidence): bool => ! $this->isEditableEvidence($evidence)
             );
 
             $docIndex = null;
@@ -363,7 +365,7 @@ class AttachmentPackageService
         // En el flujo parametrizado no se crean carteras fallback con evidencias
         // sobrantes: toda cartera generada debe existir en attachment_package_sections.
 
-        if (!empty($downloadErrors) || !empty($manifestTrace)) {
+        if (! empty($downloadErrors) || ! empty($manifestTrace)) {
             $meta = is_array($run->meta) ? $run->meta : [];
             $meta['manifest_trace'] = $manifestTrace;
             $meta['download_errors'] = $downloadErrors;
@@ -392,7 +394,7 @@ class AttachmentPackageService
             }
 
             $documentKey = $this->sectionDocumentKey($section);
-            if (!$this->shouldGenerateDocument($documentKey, $selectedKeys)) {
+            if (! $this->shouldGenerateDocument($documentKey, $selectedKeys)) {
                 continue;
             }
 
@@ -456,7 +458,7 @@ class AttachmentPackageService
             return ['added' => 0, 'bundles' => []];
         }
 
-        $docDir = $downloadDir . '/' . $documents[$docIndex]['base_name'];
+        $docDir = $downloadDir.'/'.$documents[$docIndex]['base_name'];
         File::ensureDirectoryExists($docDir);
         $parentUsedNames = collect($documents[$docIndex]['files'] ?? [])
             ->pluck('name')
@@ -483,7 +485,7 @@ class AttachmentPackageService
 
             $bundleFiles = [];
             $bundleUsedNames = [];
-            $bundleDir = $docDir . '/bundle_sources/' . $this->sanitizeFileBase($sourceFolder);
+            $bundleDir = $docDir.'/bundle_sources/'.$this->sanitizeFileBase($sourceFolder);
             File::ensureDirectoryExists($bundleDir);
 
             $linkedItems = $canCreateBundle
@@ -491,16 +493,16 @@ class AttachmentPackageService
                     $folderRequirements,
                     $evidencesByRequirement,
                     $usedEvidenceIds,
-                    fn ($evidence): bool => !$this->isEditableEvidence($evidence)
+                    fn ($evidence): bool => ! $this->isEditableEvidence($evidence)
                 )
                 : collect();
             foreach ($linkedItems as $index => $evidence) {
                 $usedEvidenceIds[$evidence->id] = true;
                 $fileId = (string) $evidence->drive_file_id;
-                $original = (string) ($evidence->drive_file_name ?: ('archivo_' . $index . '.pdf'));
+                $original = (string) ($evidence->drive_file_name ?: ('archivo_'.$index.'.pdf'));
                 $displayName = $this->evidenceDisplayName($evidence, $original);
                 $safeName = $this->uniqueFileName($this->sanitizeFileName($displayName), $bundleUsedNames);
-                $localPath = $bundleDir . '/' . $safeName;
+                $localPath = $bundleDir.'/'.$safeName;
 
                 try {
                     $this->touchDownloadStage(
@@ -534,7 +536,7 @@ class AttachmentPackageService
                     $overallPercent = 40 + (int) round(($processedEvidence / $totalEvidence) * 20);
                     $this->touchStage(
                         $run,
-                        'Descargando evidencias desde Drive (' . $processedEvidence . '/' . $totalEvidence . ')',
+                        'Descargando evidencias desde Drive ('.$processedEvidence.'/'.$totalEvidence.')',
                         $overallPercent,
                         $detailPercent
                     );
@@ -551,8 +553,8 @@ class AttachmentPackageService
                 ->values()
                 ->all();
 
-            if (!empty($bundleFiles)) {
-                $bundleAttachmentName = $this->uniqueFileName($sourceFolder . '.pdf', $parentUsedNames);
+            if (! empty($bundleFiles)) {
+                $bundleAttachmentName = $this->uniqueFileName($sourceFolder.'.pdf', $parentUsedNames);
                 $documents[$docIndex]['files'][] = [
                     'name' => $bundleAttachmentName,
                     'bundle_title' => $sourceFolder,
@@ -615,7 +617,7 @@ class AttachmentPackageService
             $downloadErrors[] = [
                 'file_id' => null,
                 'file_name' => $rootFolder,
-                'error' => 'No se pudo listar la carpeta raíz de presupuesto: ' . $e->getMessage(),
+                'error' => 'No se pudo listar la carpeta raíz de presupuesto: '.$e->getMessage(),
             ];
 
             return ['added' => 0, 'resolved_folders' => [], 'missing_folders' => [$rootFolder]];
@@ -624,16 +626,16 @@ class AttachmentPackageService
         $added = 0;
         foreach (($result['items'] ?? collect())->values() as $index => $file) {
             $fileId = (string) ($file['id'] ?? '');
-            $original = (string) ($file['name'] ?? ('archivo_' . $index));
+            $original = (string) ($file['name'] ?? ('archivo_'.$index));
             if ($fileId === '' || isset($seenDriveFileIds[$fileId])) {
                 continue;
             }
-            if (!$this->matchesActiveDocumentCode($original, $activeDocumentCodes)) {
+            if (! $this->matchesActiveDocumentCode($original, $activeDocumentCodes)) {
                 continue;
             }
 
             $safeName = $this->uniqueFileName($this->sanitizeFileName($original), $parentUsedNames);
-            $localPath = $docDir . '/' . $safeName;
+            $localPath = $docDir.'/'.$safeName;
 
             try {
                 $this->touchDriveFileStage($run, 'Descargando archivo desde carpeta Drive', $original, $fileId);
@@ -679,17 +681,17 @@ class AttachmentPackageService
         array &$downloadErrors
     ): int {
         $safeBaseName = $this->uniqueBaseName($documentTitle, '00', $documentTitle, $usedBaseNames);
-        $docDir = $downloadDir . '/' . $safeBaseName;
+        $docDir = $downloadDir.'/'.$safeBaseName;
         File::ensureDirectoryExists($docDir);
 
         $files = [];
         $usedNames = [];
         foreach ($items as $index => $evidence) {
             $usedEvidenceIds[$evidence->id] = true;
-            $original = (string) ($evidence->drive_file_name ?: ('archivo_' . $index . '.pdf'));
+            $original = (string) ($evidence->drive_file_name ?: ('archivo_'.$index.'.pdf'));
             $displayName = $this->evidenceDisplayName($evidence, $original);
             $safeName = $this->uniqueFileName($this->sanitizeFileName($displayName), $usedNames);
-            $localPath = $docDir . '/' . $safeName;
+            $localPath = $docDir.'/'.$safeName;
             try {
                 $this->touchDownloadStage(
                     $run,
@@ -723,7 +725,7 @@ class AttachmentPackageService
                 $overallPercent = 40 + (int) round(($processedEvidence / $totalEvidence) * 20);
                 $this->touchStage(
                     $run,
-                    'Descargando evidencias desde Drive (' . $processedEvidence . '/' . $totalEvidence . ')',
+                    'Descargando evidencias desde Drive ('.$processedEvidence.'/'.$totalEvidence.')',
                     $overallPercent,
                     $detailPercent
                 );
@@ -759,12 +761,13 @@ class AttachmentPackageService
         $value = mb_strtolower($value);
         $value = preg_replace('/[^a-z0-9.]+/', ' ', $value);
         $value = preg_replace('/\s+/', ' ', $value);
+
         return trim((string) $value);
     }
 
     private function matchesPackageSection(AttachmentPackageSection $section, $requirement): bool
     {
-        if (!$requirement) {
+        if (! $requirement) {
             return false;
         }
 
@@ -816,10 +819,11 @@ class AttachmentPackageService
             if ($prefix === '') {
                 continue;
             }
-            if ($code === $prefix || Str::startsWith($code, $prefix . ' ')) {
+            if ($code === $prefix || Str::startsWith($code, $prefix.' ')) {
                 return true;
             }
         }
+
         return false;
     }
 
@@ -839,7 +843,7 @@ class AttachmentPackageService
             return $this->normalizeFolderLabel((string) ($req->carpeta ?? '')) === $this->normalizeFolderLabel((string) $section->source_folder);
         });
 
-        if (!$requirement) {
+        if (! $requirement) {
             return 0;
         }
 
@@ -849,8 +853,9 @@ class AttachmentPackageService
             $downloadErrors[] = [
                 'file_id' => null,
                 'file_name' => (string) $section->source_folder,
-                'error' => 'No se pudo listar la carpeta completa: ' . $e->getMessage(),
+                'error' => 'No se pudo listar la carpeta completa: '.$e->getMessage(),
             ];
+
             return 0;
         }
 
@@ -861,7 +866,7 @@ class AttachmentPackageService
             ->values()
             ->all();
 
-        $docDir = $downloadDir . '/' . $documents[$docIndex]['base_name'];
+        $docDir = $downloadDir.'/'.$documents[$docIndex]['base_name'];
         File::ensureDirectoryExists($docDir);
         $usedNames = collect($documents[$docIndex]['files'] ?? [])
             ->pluck('name')
@@ -872,20 +877,20 @@ class AttachmentPackageService
         $added = 0;
         foreach (($result['items'] ?? []) as $index => $file) {
             $fileId = (string) ($file['id'] ?? '');
-            $original = (string) ($file['name'] ?? ('archivo_' . $index));
+            $original = (string) ($file['name'] ?? ('archivo_'.$index));
             if ($fileId === '' || isset($known[$fileId])) {
                 continue;
             }
-            if (!$this->matchesActiveDocumentCode($original, $activeDocumentCodes)) {
+            if (! $this->matchesActiveDocumentCode($original, $activeDocumentCodes)) {
                 continue;
             }
             $extension = mb_strtolower(pathinfo($original, PATHINFO_EXTENSION));
-            if (!empty($allowed) && !in_array($extension, $allowed, true)) {
+            if (! empty($allowed) && ! in_array($extension, $allowed, true)) {
                 continue;
             }
 
             $safeName = $this->uniqueFileName($this->sanitizeFileName($original), $usedNames);
-            $localPath = $docDir . '/' . $safeName;
+            $localPath = $docDir.'/'.$safeName;
             try {
                 $this->touchDriveFileStage($run, 'Descargando archivo desde carpeta configurada', $original, $fileId);
                 $this->drive()->downloadFile($fileId, $localPath, $userId);
@@ -956,7 +961,7 @@ class AttachmentPackageService
             $downloadErrors[] = [
                 'file_id' => null,
                 'file_name' => $rootFolder,
-                'error' => 'No se pudo listar recursivamente las subcarpetas configuradas: ' . $e->getMessage(),
+                'error' => 'No se pudo listar recursivamente las subcarpetas configuradas: '.$e->getMessage(),
             ];
 
             return [
@@ -981,19 +986,19 @@ class AttachmentPackageService
         $parentAdded = 0;
         foreach (($result['items'] ?? collect())->values() as $index => $file) {
             $fileId = (string) ($file['id'] ?? '');
-            $original = (string) ($file['name'] ?? ('archivo_' . $index));
+            $original = (string) ($file['name'] ?? ('archivo_'.$index));
             if ($fileId === '' || isset($seenDriveFileIds[$fileId])) {
                 continue;
             }
 
             $extension = mb_strtolower(pathinfo($original, PATHINFO_EXTENSION));
             $isBundleFile = in_array($extension, $bundleExtensions, true);
-            if (!$isBundleFile) {
+            if (! $isBundleFile) {
                 continue;
             }
 
             $safeName = $this->uniqueFileName($this->sanitizeFileName($original), $usedNames);
-            $localPath = $targetDir . '/' . $safeName;
+            $localPath = $targetDir.'/'.$safeName;
 
             try {
                 if ($run) {
@@ -1040,7 +1045,7 @@ class AttachmentPackageService
             return $this->normalizeFolderLabel((string) ($req->carpeta ?? '')) === '01 formulacion';
         });
 
-        if (!$requirement) {
+        if (! $requirement) {
             return 0;
         }
 
@@ -1050,13 +1055,14 @@ class AttachmentPackageService
             $downloadErrors[] = [
                 'file_id' => null,
                 'file_name' => (string) $section->name,
-                'error' => 'No se pudo listar archivos directos de Formulación: ' . $e->getMessage(),
+                'error' => 'No se pudo listar archivos directos de Formulación: '.$e->getMessage(),
             ];
+
             return 0;
         }
 
         $known = array_fill_keys($knownDriveFileIds, true);
-        $docDir = $downloadDir . '/' . $documents[$docIndex]['base_name'];
+        $docDir = $downloadDir.'/'.$documents[$docIndex]['base_name'];
         File::ensureDirectoryExists($docDir);
         $usedNames = collect($documents[$docIndex]['files'] ?? [])
             ->pluck('name')
@@ -1066,7 +1072,7 @@ class AttachmentPackageService
 
         $added = 0;
         $codes = $this->formulationLooseCodesForSection($section);
-        $onlyMissingCodes = !$this->isFormulationOtherSupportsSection($section);
+        $onlyMissingCodes = ! $this->isFormulationOtherSupportsSection($section);
         $representedCodes = $onlyMissingCodes
             ? $this->representedDocumentCodes($documents[$docIndex]['files'] ?? [])
             : [];
@@ -1078,7 +1084,7 @@ class AttachmentPackageService
 
         foreach ($items as $index => $file) {
             $fileId = (string) ($file['id'] ?? '');
-            $original = (string) ($file['name'] ?? ('archivo_' . $index));
+            $original = (string) ($file['name'] ?? ('archivo_'.$index));
             if ($fileId === '' || isset($known[$fileId])) {
                 continue;
             }
@@ -1089,7 +1095,7 @@ class AttachmentPackageService
             }
 
             $safeName = $this->uniqueFileName($this->sanitizeFileName($original), $usedNames);
-            $localPath = $docDir . '/' . $safeName;
+            $localPath = $docDir.'/'.$safeName;
             try {
                 $this->touchDriveFileStage($run, 'Descargando archivo directo de Formulación', $original, $fileId);
                 $this->drive()->downloadFile($fileId, $localPath, $userId);
@@ -1123,16 +1129,21 @@ class AttachmentPackageService
         return collect($requirements)
             ->flatMap(function ($requirement) use ($evidencesByRequirement, $usedEvidenceIds) {
                 return collect($evidencesByRequirement->get($requirement->id, collect()))
-                    ->filter(fn ($evidence) => !isset($usedEvidenceIds[$evidence->id]));
+                    ->filter(fn ($evidence) => ! isset($usedEvidenceIds[$evidence->id]));
             })
             ->when($filter !== null, fn ($items) => $items->filter($filter))
-            ->sortBy(fn ($evidence) => $this->requirementSortKey($evidence->requirement) . '|' . $this->fileSortKey((string) ($evidence->drive_file_name ?? '')))
+            ->sortBy(fn ($evidence) => $this->requirementSortKey($evidence->requirement).'|'.$this->fileSortKey((string) ($evidence->drive_file_name ?? '')))
             ->values();
     }
 
     private function isCurrentRequirementEvidenceCandidate($evidence): bool
     {
-        if (!$evidence->requirement || !(bool) ($evidence->in_drive ?? false)) {
+        if (! $evidence->requirement || ! (bool) ($evidence->in_drive ?? false)) {
+            return false;
+        }
+
+        if ($evidence->requirement->requiresLicensePermitClassification()
+            && ! RequirementEvidence::isValidLicensePermitStatus($evidence->license_permit_status)) {
             return false;
         }
 
@@ -1157,7 +1168,7 @@ class AttachmentPackageService
         $name = mb_strtolower($name);
         $name = preg_replace('/\s+/', ' ', trim($name));
 
-        return $requirementId . '|' . $name;
+        return $requirementId.'|'.$name;
     }
 
     private function isPdfEvidence($evidence): bool
@@ -1174,6 +1185,7 @@ class AttachmentPackageService
     {
         $code = (string) ($requirement->orden ?: $requirement->codigo_interno ?: $requirement->numeracion ?: '999');
         $title = (string) ($requirement->nombre_documento ?: $requirement->requisito ?: '');
+
         return $this->requirementCodeSortKey($code, $title);
     }
 
@@ -1189,7 +1201,7 @@ class AttachmentPackageService
             $segments = ['99999999'];
         }
 
-        return implode('.', $segments) . '.00000000 ' . $this->fileSortKey($title);
+        return implode('.', $segments).'.00000000 '.$this->fileSortKey($title);
     }
 
     private function fileSortKey(string $name): string
@@ -1198,6 +1210,7 @@ class AttachmentPackageService
         $normalized = mb_strtolower($normalized);
         $normalized = str_replace(['.', '_'], ' ', $normalized);
         $normalized = preg_replace_callback('/\d+/', fn ($match) => str_pad($match[0], 8, '0', STR_PAD_LEFT), $normalized);
+
         return (string) $normalized;
     }
 
@@ -1233,7 +1246,7 @@ class AttachmentPackageService
                 return [$folder];
             })
             ->map(fn ($folder) => trim((string) $folder))
-            ->filter(fn ($folder) => !$this->isEditableFolderLabel((string) $folder))
+            ->filter(fn ($folder) => ! $this->isEditableFolderLabel((string) $folder))
             ->unique(fn ($folder) => $this->normalizeFolderLabel((string) $folder))
             ->values()
             ->mapWithKeys(fn ($folder) => [$this->normalizeFolderLabel((string) $folder) => (string) $folder]);
@@ -1316,7 +1329,7 @@ class AttachmentPackageService
         $normalized = $this->documentCodeMatchLabel(pathinfo($name, PATHINFO_FILENAME));
         foreach ($codes as $code) {
             $code = $this->documentCodeMatchLabel($code);
-            if ($normalized === $code || Str::startsWith($normalized, $code . ' ')) {
+            if ($normalized === $code || Str::startsWith($normalized, $code.' ')) {
                 return true;
             }
         }
@@ -1397,7 +1410,7 @@ class AttachmentPackageService
     {
         $normalized = $this->documentCodeMatchLabel(pathinfo($name, PATHINFO_FILENAME));
         if (preg_match('/^(\d+) (\d+)/', $normalized, $matches)) {
-            return ((int) $matches[1]) . ' ' . str_pad((string) ((int) $matches[2]), 2, '0', STR_PAD_LEFT);
+            return ((int) $matches[1]).' '.str_pad((string) ((int) $matches[2]), 2, '0', STR_PAD_LEFT);
         }
 
         return '';
@@ -1409,6 +1422,7 @@ class AttachmentPackageService
         $value = mb_strtolower($value);
         $value = preg_replace('/[^a-z0-9]+/', ' ', $value);
         $value = preg_replace('/\s+/', ' ', $value);
+
         return trim((string) $value);
     }
 
@@ -1427,13 +1441,13 @@ class AttachmentPackageService
             return $fileName;
         }
 
-        return trim($folderName, '/\\') . '/' . $fileName;
+        return trim($folderName, '/\\').'/'.$fileName;
     }
 
     private function evidenceDisplayName($evidence, string $original): string
     {
         $requirement = $evidence->requirement;
-        if (!$requirement) {
+        if (! $requirement) {
             return $original;
         }
 
@@ -1448,9 +1462,9 @@ class AttachmentPackageService
             if (
                 $this->shouldPrefixRequirementCode($code)
                 && $normalizedTitle !== $normalizedCode
-                && !str_starts_with($normalizedTitle, $normalizedCode . ' ')
+                && ! str_starts_with($normalizedTitle, $normalizedCode.' ')
             ) {
-                $label = trim($code . ' ' . $title);
+                $label = trim($code.' '.$title);
             }
         } elseif ($code !== '') {
             $label = $this->shouldPrefixRequirementCode($code) ? $code : $label;
@@ -1460,12 +1474,12 @@ class AttachmentPackageService
             $label = pathinfo($original, PATHINFO_FILENAME);
         }
 
-        return $extension !== '' ? $label . '.' . Str::lower($extension) : $label;
+        return $extension !== '' ? $label.'.'.Str::lower($extension) : $label;
     }
 
     private function manifestEntrySortKey($requirement, string $fallbackName): string
     {
-        if (!$requirement) {
+        if (! $requirement) {
             return $this->fileSortKey($fallbackName);
         }
 
@@ -1524,22 +1538,22 @@ class AttachmentPackageService
             return $subgroup;
         }
 
-        return 'Grupo ' . $groupCode;
+        return 'Grupo '.$groupCode;
     }
 
     private function sectionDocumentKey(AttachmentPackageSection $section): string
     {
-        return 'section:' . $section->id;
+        return 'section:'.$section->id;
     }
 
     private function studyDocumentKey(string $folder): string
     {
-        return 'study:' . $this->normalizeFolderLabel($folder);
+        return 'study:'.$this->normalizeFolderLabel($folder);
     }
 
     private function documentKeyFromTitle(string $title): string
     {
-        return 'title:' . $this->normalizeFolderLabel($title);
+        return 'title:'.$this->normalizeFolderLabel($title);
     }
 
     private function orderedStudyGroupsFromRequirements($requirements, AttachmentPackageSection $section)
@@ -1638,7 +1652,8 @@ class AttachmentPackageService
                 $subgroup = trim((string) ($req->carpeta ?: 'Sin Subgrupo'));
                 $groupCode = $this->extractGroupCode((string) ($req->codigo_interno ?? $req->numeracion ?? ''));
                 $prefix = str_pad((string) $groupCode, 2, '0', STR_PAD_LEFT);
-                return $prefix . '|' . $subgroup;
+
+                return $prefix.'|'.$subgroup;
             });
 
         $documents = [];
@@ -1661,7 +1676,7 @@ class AttachmentPackageService
             );
         }
 
-        if (!empty($downloadErrors)) {
+        if (! empty($downloadErrors)) {
             $meta = is_array($run->meta) ? $run->meta : [];
             $meta['download_errors'] = $downloadErrors;
             $meta['download_errors_count'] = count($downloadErrors);
@@ -1680,11 +1695,12 @@ class AttachmentPackageService
         $counter = 2;
         while (isset($usedNames[mb_strtolower($candidate)])) {
             $candidate = $extension !== ''
-                ? $base . ' ' . $counter . '.' . $extension
-                : $base . ' ' . $counter;
+                ? $base.' '.$counter.'.'.$extension
+                : $base.' '.$counter;
             $counter++;
         }
         $usedNames[mb_strtolower($candidate)] = true;
+
         return $candidate;
     }
 
@@ -1692,20 +1708,21 @@ class AttachmentPackageService
     {
         $preferred = $this->sanitizeFileBase($documentTitle);
         if ($preferred === 'archivo' || $preferred === '') {
-            $preferred = $this->sanitizeFileBase($groupCode . ' ' . $subgroup);
+            $preferred = $this->sanitizeFileBase($groupCode.' '.$subgroup);
         }
         if ($preferred === 'archivo' || $preferred === '') {
-            $preferred = 'documento ' . Str::lower($groupCode);
+            $preferred = 'documento '.Str::lower($groupCode);
         }
 
         $candidate = $preferred;
         $i = 2;
         while (in_array(Str::lower($candidate), $usedBaseNames, true)) {
-            $candidate = $preferred . ' ' . $i;
+            $candidate = $preferred.' '.$i;
             $i++;
         }
 
         $usedBaseNames[] = Str::lower($candidate);
+
         return $candidate;
     }
 
@@ -1714,24 +1731,24 @@ class AttachmentPackageService
         $runtime = app(AttachmentPdfRuntime::class);
         $python = $runtime->pythonBin();
         $script = $runtime->scriptPath();
-        if (!file_exists($script)) {
-            throw new \RuntimeException('No existe el script Python de adjuntos: ' . $script);
+        if (! file_exists($script)) {
+            throw new \RuntimeException('No existe el script Python de adjuntos: '.$script);
         }
 
         $process = new Process([$python, $script, '--manifest', $manifestPath]);
         $process->setTimeout(1200);
         $process->run();
 
-        if (!$process->isSuccessful()) {
-            throw new \RuntimeException('Fallo al ejecutar generador Python: ' . trim($process->getErrorOutput() ?: $process->getOutput()));
+        if (! $process->isSuccessful()) {
+            throw new \RuntimeException('Fallo al ejecutar generador Python: '.trim($process->getErrorOutput() ?: $process->getOutput()));
         }
 
         $output = trim($process->getOutput());
         $decoded = json_decode($output, true);
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             throw new \RuntimeException('Respuesta invalida del generador Python.');
         }
-        if (!empty($decoded['error'])) {
+        if (! empty($decoded['error'])) {
             throw new \RuntimeException((string) $decoded['error']);
         }
 
@@ -1740,13 +1757,13 @@ class AttachmentPackageService
 
     private function buildZip(string $zipPath, string $outputDir, array $pdfFilenames, ?string $missingReport, ?string $generalReport): void
     {
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
             throw new \RuntimeException('No se pudo crear el ZIP de salida.');
         }
 
         foreach ($pdfFilenames as $filename) {
-            $path = $outputDir . '/' . $filename;
+            $path = $outputDir.'/'.$filename;
             if (file_exists($path)) {
                 $zip->addFile($path, $filename);
             }
@@ -1795,6 +1812,7 @@ class AttachmentPackageService
         if (preg_match('/^\s*(\d+)/', $code, $m)) {
             return max(1, min(99, (int) $m[1]));
         }
+
         return 99;
     }
 
@@ -1811,7 +1829,8 @@ class AttachmentPackageService
         if ($extension === '') {
             return $safe;
         }
-        return $safe . '.' . Str::lower($extension);
+
+        return $safe.'.'.Str::lower($extension);
     }
 
     private function sanitizeCore(string $value): string
@@ -1822,12 +1841,13 @@ class AttachmentPackageService
         $value = preg_replace('/[^A-Za-z0-9 -]+/', '', $value);
         $value = preg_replace('/\s+/', ' ', trim((string) $value));
         $value = trim((string) $value, ' -');
+
         return $value !== '' ? $value : 'archivo';
     }
 
     private function cleanupWorkDirectory(string $workDir): void
     {
-        if (!is_dir($workDir)) {
+        if (! is_dir($workDir)) {
             return;
         }
 
@@ -1871,7 +1891,7 @@ class AttachmentPackageService
 
         $detailPercent = (int) round(($current / $total) * 100);
         $overallPercent = 40 + (int) round(($current / $total) * 20);
-        $label = 'Descargando evidencia desde Drive (' . $current . '/' . $total . '): ' . $fileName;
+        $label = 'Descargando evidencia desde Drive ('.$current.'/'.$total.'): '.$fileName;
 
         $meta = is_array($run->meta) ? $run->meta : [];
         $meta['drive_download_file_id'] = $fileId;
@@ -1893,7 +1913,7 @@ class AttachmentPackageService
         $meta['drive_download_file_id'] = $fileId;
         $meta['drive_download_file_name'] = $fileName;
         $meta['drive_download_started_at'] = now()->toDateTimeString();
-        $meta['stage_label'] = mb_strimwidth($context . ': ' . $fileName, 0, 180, '...');
+        $meta['stage_label'] = mb_strimwidth($context.': '.$fileName, 0, 180, '...');
         $meta['drive_folder_download_sequence'] = ((int) ($meta['drive_folder_download_sequence'] ?? 0)) + 1;
         $currentPercent = max(45, (int) ($meta['stage_percent'] ?? 45));
         $meta['stage_percent'] = min(60, max($currentPercent, 44 + (int) $meta['drive_folder_download_sequence']));

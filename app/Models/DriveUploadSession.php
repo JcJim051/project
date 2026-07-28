@@ -17,6 +17,7 @@ class DriveUploadSession extends Model
         'original_name',
         'target_name',
         'mime_type',
+        'license_permit_status',
         'size_bytes',
         'uploaded_bytes',
         'drive_folder_id',

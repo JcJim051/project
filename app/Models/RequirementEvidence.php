@@ -9,6 +9,10 @@ class RequirementEvidence extends Model
 {
     use HasFactory;
 
+    public const LICENSE_PERMIT_APPLICATION = 'application';
+
+    public const LICENSE_PERMIT_ISSUED = 'issued';
+
     protected $table = 'requirement_evidences';
 
     protected $fillable = [
@@ -23,12 +27,16 @@ class RequirementEvidence extends Model
         'linked_by_user_id',
         'linked_at',
         'link_note',
+        'license_permit_status',
+        'classified_by_user_id',
+        'classified_at',
         'in_drive',
     ];
 
     protected $casts = [
         'drive_modified_time' => 'datetime',
         'linked_at' => 'datetime',
+        'classified_at' => 'datetime',
         'in_drive' => 'boolean',
     ];
 
@@ -45,6 +53,29 @@ class RequirementEvidence extends Model
     public function linkedBy()
     {
         return $this->belongsTo(User::class, 'linked_by_user_id');
+    }
+
+    public function classifiedBy()
+    {
+        return $this->belongsTo(User::class, 'classified_by_user_id');
+    }
+
+    public static function licensePermitStatusOptions(): array
+    {
+        return [
+            self::LICENSE_PERMIT_APPLICATION => 'Solicitud o radicado',
+            self::LICENSE_PERMIT_ISSUED => 'Licencia o permiso expedido',
+        ];
+    }
+
+    public static function isValidLicensePermitStatus(?string $status): bool
+    {
+        return array_key_exists((string) $status, self::licensePermitStatusOptions());
+    }
+
+    public function licensePermitStatusLabel(): string
+    {
+        return self::licensePermitStatusOptions()[$this->license_permit_status] ?? 'Por clasificar';
     }
 
     public function canPreviewInPortal(): bool

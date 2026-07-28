@@ -4,21 +4,23 @@ namespace App\Http\Controllers;
 
 use App\Events\GamificationActivityTriggered;
 use App\Jobs\ProvisionPlaneProjectJob;
-use App\Models\Project;
-use App\Models\Requirement;
-use App\Models\RequirementEvidence;
 use App\Models\AttachmentPackageRun;
 use App\Models\DriveUploadSession;
-use App\Services\GoogleDriveService;
+use App\Models\Project;
+use App\Models\ProjectWorkflowStep;
+use App\Models\Requirement;
+use App\Models\RequirementEvidence;
 use App\Services\AttachmentPdfRuntime;
+use App\Services\GoogleDriveService;
+use App\Services\LicensePermitEvidenceService;
 use App\Services\MgaTransferAuthorizationService;
+use App\Services\ProjectWorkflowService;
 use App\Services\RequirementProgressService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use Symfony\Component\Process\Process;
-use Carbon\Carbon;
 
 class ProjectManageController extends Controller
 {
@@ -38,6 +40,7 @@ class ProjectManageController extends Controller
 
         $project->load(['requisitos', 'sectores', 'formulador', 'estructurador']);
         $requirements = $this->getActiveRequirementsForProject($project);
+        $workflowStages = app(ProjectWorkflowService::class)->buildForProject($project);
 
         $renumerated = $this->buildRenumerationMap($requirements);
 
@@ -55,12 +58,12 @@ class ProjectManageController extends Controller
                     ->route($routeName, $project)
                     ->with('error', $e->getMessage() ?: 'Error al sincronizar con Drive.');
             }
-            if (!empty($syncReport['error'])) {
+            if (! empty($syncReport['error'])) {
                 return redirect()
                     ->route($routeName, $project)
                     ->with('error', $syncReport['error']);
             }
-            if (!$request->boolean('debug')) {
+            if (! $request->boolean('debug')) {
                 $syncReport = null;
             }
         }
@@ -73,6 +76,16 @@ class ProjectManageController extends Controller
         $progressAnalysis = $progressService->analyze($requirements, $evidenceRows);
         $overallProgress = $progressService->buildOverallProgress($requirements, $progressAnalysis);
         $overallPercent = $overallProgress['percent'];
+        $workflowStages = $workflowStages->map(function (array $stage) use ($overallPercent): array {
+            if ($stage['model']->slug !== 'estructuracion') {
+                return $stage;
+            }
+
+            $stage['percent'] = $overallPercent;
+            $stage['status'] = $overallPercent >= 100 ? 'completed' : 'pending';
+
+            return $stage;
+        });
 
         $requirementsByFolder = $requirements->groupBy(function ($req) {
             return $req->carpeta ?? 'Sin carpeta';
@@ -106,7 +119,7 @@ class ProjectManageController extends Controller
         $assigned = collect([
             $project->formulador_id => $project->formulador?->name ?? 'Formulador',
             $project->estructurador_id => $project->estructurador?->name ?? 'Estructurador',
-        ])->filter(fn ($name, $id) => !empty($id));
+        ])->filter(fn ($name, $id) => ! empty($id));
         $transferReceiptStates = [];
         foreach ($assigned as $userId => $name) {
             $receipt = $transferRequest?->receipts?->firstWhere('user_id', (int) $userId);
@@ -122,7 +135,7 @@ class ProjectManageController extends Controller
             && $transferRequest
             && in_array($transferRequest->status, ['approved', 'rejected'], true);
         $canRequestTransfer = auth()->user()?->canRequestMgaTransfer() === true
-            && !$project->transferRequests()->where('status', 'pending')->exists();
+            && ! $project->transferRequests()->where('status', 'pending')->exists();
         $canAuthorizeTransfer = auth()->user()?->canAuthorizeMgaTransfer() === true;
 
         return view($viewName, [
@@ -135,6 +148,7 @@ class ProjectManageController extends Controller
             'syncReport' => $syncReport,
             'renumerated' => $renumerated,
             'overallPercent' => $overallPercent,
+            'overallProgress' => $overallProgress,
             'folderProgress' => $folderProgress,
             'manageSections' => $manageSections,
             'topGroupProgress' => $topGroupProgress,
@@ -152,9 +166,59 @@ class ProjectManageController extends Controller
             'canAuthorizeTransfer' => $canAuthorizeTransfer,
             'canAcknowledgeTransfer' => $canAcknowledgeTransfer,
             'transferReceiptStates' => $transferReceiptStates,
+            'workflowStages' => $workflowStages,
+            'canValidateWorkflow' => (bool) (auth()->user()?->isAdminUser()
+                || auth()->user()?->hasAnyRole(['director', 'planeacion_aim'])),
+            'canOverrideWorkflowApplicability' => (bool) auth()->user()?->isAdminUser(),
         ]);
     }
 
+    public function validateWorkflowStep(
+        Request $request,
+        Project $project,
+        ProjectWorkflowStep $step,
+        ProjectWorkflowService $service
+    ) {
+        $this->assertWorkflowStepBelongsToProject($project, $step);
+        $data = $request->validate([
+            'validation_note' => ['nullable', 'string', 'max:2000'],
+        ]);
+        $service->validateStep($project, $step->id, $request->user(), $data['validation_note'] ?? null);
+
+        return back()->with('status', 'El elemento fue validado correctamente.');
+    }
+
+    public function clearWorkflowStepValidation(
+        Request $request,
+        Project $project,
+        ProjectWorkflowStep $step,
+        ProjectWorkflowService $service
+    ) {
+        $this->assertWorkflowStepBelongsToProject($project, $step);
+        $service->clearValidation($project, $step->id, $request->user());
+
+        return back()->with('status', 'La validación fue retirada.');
+    }
+
+    public function updateWorkflowStepApplicability(
+        Request $request,
+        Project $project,
+        ProjectWorkflowStep $step,
+        ProjectWorkflowService $service
+    ) {
+        $this->assertWorkflowStepBelongsToProject($project, $step);
+        $data = $request->validate([
+            'applicability' => ['required', 'in:default,applicable,not_applicable'],
+        ]);
+        $value = match ($data['applicability']) {
+            'applicable' => true,
+            'not_applicable' => false,
+            default => null,
+        };
+        $service->setApplicability($project, $step->id, $value, $request->user());
+
+        return back()->with('status', 'La aplicabilidad fue actualizada.');
+    }
 
     public function storeCustomCertification(Request $request, Project $project, GoogleDriveService $drive)
     {
@@ -180,14 +244,14 @@ class ProjectManageController extends Controller
         }
 
         if ($request->hasFile('archivo')) {
-            if (!$project->drive_folder_id) {
+            if (! $project->drive_folder_id) {
                 return response()->json([
                     'ok' => false,
                     'message' => 'El proyecto no tiene carpeta de Drive configurada para cargar el archivo.',
                 ], 422);
             }
 
-            if (!$drive->isAuthorized(auth()->id())) {
+            if (! $drive->isAuthorized(auth()->id())) {
                 return response()->json([
                     'ok' => false,
                     'message' => 'Drive no está conectado para cargar el archivo.',
@@ -202,6 +266,7 @@ class ProjectManageController extends Controller
             ->get(['requirements.id', 'requirements.nombre_documento', 'requirements.requisito'])
             ->first(function (Requirement $requirement) use ($normalizedName) {
                 $candidate = (string) ($requirement->nombre_documento ?: $requirement->requisito);
+
                 return $this->normalizeCustomCertificationName($candidate) === $normalizedName;
             });
 
@@ -267,7 +332,7 @@ class ProjectManageController extends Controller
             } catch (\Throwable $e) {
                 return response()->json([
                     'ok' => true,
-                    'message' => 'La certificación fue creada, pero no se pudo cargar el archivo inicial: ' . $e->getMessage(),
+                    'message' => 'La certificación fue creada, pero no se pudo cargar el archivo inicial: '.$e->getMessage(),
                     'requirement_id' => $requirement->id,
                 ]);
             }
@@ -291,7 +356,7 @@ class ProjectManageController extends Controller
         $userId = auth()->id();
         $project->load('requisitos');
 
-        if (!$project->requisitos->contains($requirement->id)) {
+        if (! $project->requisitos->contains($requirement->id)) {
             return $this->uploadErrorResponse($expectsJson, 422, 'requirement_not_applicable', 'Este requisito no está marcado para el proyecto.');
         }
 
@@ -299,6 +364,7 @@ class ProjectManageController extends Controller
         $progressService = app(RequirementProgressService::class);
         if ($progressService->isCompositeParent($requirement)) {
             $targetFolder = $progressService->compositeTargetFolder($requirement) ?: 'su carpeta hija';
+
             return $this->uploadErrorResponse(
                 $expectsJson,
                 422,
@@ -314,21 +380,46 @@ class ProjectManageController extends Controller
             ->where('in_drive', true)
             ->exists();
 
-        if (!$project->drive_folder_id) {
+        if (! $project->drive_folder_id) {
             return $this->uploadErrorResponse($expectsJson, 422, 'missing_drive_folder', 'El proyecto no tiene carpeta de Drive configurada.');
         }
 
-        if (!$drive->isAuthorized($userId)) {
+        if (! $drive->isAuthorized($userId)) {
             return $this->uploadErrorResponse($expectsJson, 422, 'drive_not_authorized', 'Conecta Drive antes de cargar evidencias.');
         }
 
         $validator = Validator::make($request->all(), [
             'archivos' => ['required', 'array', 'min:1'],
             'archivos.*' => ['file', 'max:51200'],
+            'license_permit_status' => [
+                $requirement->requiresLicensePermitClassification() ? 'required_without:license_permit_statuses' : 'nullable',
+                'string',
+                'in:application,issued',
+            ],
+            'license_permit_statuses' => [
+                $requirement->requiresLicensePermitClassification() ? 'required_without:license_permit_status' : 'nullable',
+                'array',
+            ],
+            'license_permit_statuses.*' => ['required', 'string', 'in:application,issued'],
         ], [
             'archivos.required' => 'Debes seleccionar al menos un archivo.',
             'archivos.*.max' => 'Cada archivo debe pesar máximo 50MB.',
+            'license_permit_status.required_without' => 'Debes clasificar cada documento de licencia o permiso.',
+            'license_permit_statuses.required_without' => 'Debes clasificar cada documento de licencia o permiso.',
         ]);
+        $validator->after(function ($validator) use ($request, $requirement): void {
+            if (! $requirement->requiresLicensePermitClassification() || $request->filled('license_permit_status')) {
+                return;
+            }
+
+            if (count((array) $request->input('license_permit_statuses', []))
+                !== count((array) $request->file('archivos', []))) {
+                $validator->errors()->add(
+                    'license_permit_statuses',
+                    'Debes clasificar individualmente cada documento de licencia o permiso.'
+                );
+            }
+        });
 
         if ($validator->fails()) {
             $message = $validator->errors()->first() ?: 'Archivo inválido.';
@@ -340,6 +431,7 @@ class ProjectManageController extends Controller
                     'errors' => $validator->errors(),
                 ], 422);
             }
+
             return back()->withErrors($validator)->withInput();
         }
 
@@ -352,10 +444,13 @@ class ProjectManageController extends Controller
         $index = 1;
         $totalFiles = count($data['archivos']);
         foreach ($data['archivos'] as $archivo) {
+            $licensePermitStatus = $data['license_permit_statuses'][$index - 1]
+                ?? $data['license_permit_status']
+                ?? null;
             $suffix = $totalFiles > 1 ? " ({$index})" : '';
             $extension = $archivo->getClientOriginalExtension();
             $targetBase = $this->buildRenumberedFileBase($prefix, $baseName, $suffix);
-            $targetName = $extension ? $targetBase . '.' . $extension : $targetBase;
+            $targetName = $extension ? $targetBase.'.'.$extension : $targetBase;
 
             Log::info('manage_upload_attempt', [
                 'project_id' => $project->id,
@@ -367,7 +462,14 @@ class ProjectManageController extends Controller
             ]);
 
             try {
-                $drive->uploadEvidence($project, $requirement, $archivo, $targetName, $userId);
+                $drive->uploadEvidence(
+                    $project,
+                    $requirement,
+                    $archivo,
+                    $targetName,
+                    $userId,
+                    $licensePermitStatus
+                );
                 $uploadedCount++;
             } catch (\Throwable $e) {
                 Log::error('manage_upload_failed', [
@@ -396,11 +498,18 @@ class ProjectManageController extends Controller
             ->where('drive_folder_name', $requirement->carpeta)
             ->orderByDesc('id')
             ->get();
+        if ($requirement->requiresLicensePermitClassification()) {
+            app(LicensePermitEvidenceService::class)->invalidateWorkflowValidation($project);
+        }
+        $validRequirementEvidences = $requirementEvidences
+            ->where('in_drive', true)
+            ->filter(fn (RequirementEvidence $evidence) => ! $requirement->requiresLicensePermitClassification()
+                || RequirementEvidence::isValidLicensePermitStatus($evidence->license_permit_status));
 
         $payload = [
             'id' => $requirement->id,
-            'has_evidence' => $requirementEvidences->where('in_drive', true)->isNotEmpty(),
-            'valid_evidence_count' => $requirementEvidences->where('in_drive', true)->count(),
+            'has_evidence' => $validRequirementEvidences->isNotEmpty(),
+            'valid_evidence_count' => $validRequirementEvidences->count(),
             'evidences' => $requirementEvidences->map(function (RequirementEvidence $evidence) {
                 return [
                     'id' => $evidence->id,
@@ -412,11 +521,13 @@ class ProjectManageController extends Controller
                     'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                     'source' => $evidence->source,
                     'is_valid' => (bool) $evidence->in_drive,
+                    'license_permit_status' => $evidence->license_permit_status,
+                    'license_permit_status_label' => $evidence->licensePermitStatusLabel(),
                 ];
             })->values()->all(),
         ];
 
-        if (!$hadValidEvidenceBefore && ($payload['has_evidence'] ?? false) && $userId) {
+        if (! $hadValidEvidenceBefore && ($payload['has_evidence'] ?? false) && $userId) {
             event(new GamificationActivityTriggered('req_first_valid_evidence', (int) $userId, [
                 'project_id' => (int) $project->id,
                 'requirement_id' => (int) $requirement->id,
@@ -436,11 +547,11 @@ class ProjectManageController extends Controller
         return back()->with('status', 'Evidencias cargadas en Drive.');
     }
 
-
     private function cleanCustomCertificationName(string $value): string
     {
         $value = preg_replace('/\s+/', ' ', trim($value));
         $value = trim((string) $value, " \t\n\r\0\x0B.-_");
+
         return $value;
     }
 
@@ -450,6 +561,7 @@ class ProjectManageController extends Controller
         $value = mb_strtolower($value);
         $value = preg_replace('/[^a-z0-9]+/', ' ', $value);
         $value = preg_replace('/\s+/', ' ', $value);
+
         return trim((string) $value);
     }
 
@@ -465,7 +577,8 @@ class ProjectManageController extends Controller
         }
 
         $extension = mb_strtolower(trim((string) $extension, '. '));
-        return $extension !== '' ? $base . '.' . $extension : $base;
+
+        return $extension !== '' ? $base.'.'.$extension : $base;
     }
 
     private function uploadErrorResponse(bool $expectsJson, int $status, string $code, string $message)
@@ -486,10 +599,10 @@ class ProjectManageController extends Controller
         $this->authorizeProjectMutation();
 
         $userId = auth()->id();
-        if (!$project->drive_folder_id) {
+        if (! $project->drive_folder_id) {
             return back()->with('error', 'El proyecto no tiene carpeta de Drive configurada.');
         }
-        if (!$drive->isAuthorized($userId)) {
+        if (! $drive->isAuthorized($userId)) {
             return back()->with('error', 'Conecta Drive antes de renumerar.');
         }
 
@@ -502,7 +615,7 @@ class ProjectManageController extends Controller
 
         foreach ($requirements as $requirement) {
             $prefix = $renumerated[$requirement->id] ?? null;
-            if (!$prefix) {
+            if (! $prefix) {
                 continue;
             }
 
@@ -530,6 +643,7 @@ class ProjectManageController extends Controller
                     if ((bool) $evidence->in_drive !== $isValid) {
                         $evidence->forceFill(['in_drive' => $isValid])->save();
                     }
+
                     return $isValid;
                 })
                 ->values();
@@ -541,11 +655,12 @@ class ProjectManageController extends Controller
                 $extension = pathinfo($currentName, PATHINFO_EXTENSION);
                 $suffix = $total > 1 ? " ({$index})" : '';
                 $targetBase = $this->buildRenumberedFileBase($prefix, $baseName, $suffix);
-                $targetName = $extension !== '' ? $targetBase . '.' . $extension : $targetBase;
+                $targetName = $extension !== '' ? $targetBase.'.'.$extension : $targetBase;
 
                 if ($targetName === $currentName) {
                     $skipped++;
                     $index++;
+
                     continue;
                 }
 
@@ -603,6 +718,7 @@ class ProjectManageController extends Controller
                 $studyKey = $this->studyRequirementGroupKey($req);
                 $counters[$studyKey] = ($counters[$studyKey] ?? 0) + 1;
                 $map[$req->id] = (string) $counters[$studyKey];
+
                 continue;
             }
 
@@ -612,7 +728,7 @@ class ProjectManageController extends Controller
                 $major = $groupCode;
             }
             $folderKey = mb_strtolower(trim((string) ($req->carpeta ?? 'sin-carpeta')));
-            $counterKey = $groupCode . '|' . $folderKey;
+            $counterKey = $groupCode.'|'.$folderKey;
             $counters[$counterKey] = ($counters[$counterKey] ?? 0) + 1;
             $map[$req->id] = sprintf('%s.%02d', $major, $counters[$counterKey]);
         }
@@ -634,17 +750,18 @@ class ProjectManageController extends Controller
     private function buildRenumberedFileBase(string $prefix, string $baseName, string $suffix = ''): string
     {
         $base = trim(implode(' ', array_filter([trim($prefix), trim($baseName)], fn ($part) => $part !== '')));
-        return trim($base . $suffix);
+
+        return trim($base.$suffix);
     }
 
     private function studyRequirementGroupKey(Requirement $requirement): string
     {
         $code = trim((string) ($requirement->codigo_interno ?? $requirement->numeracion ?? ''));
         if (preg_match('/^\s*(5\.\d+)/', $code, $matches)) {
-            return 'study|' . $matches[1];
+            return 'study|'.$matches[1];
         }
 
-        return 'study|' . $this->normalizeFolderName((string) ($requirement->carpeta ?? 'sin-carpeta'));
+        return 'study|'.$this->normalizeFolderName((string) ($requirement->carpeta ?? 'sin-carpeta'));
     }
 
     private function isEstudioRequirement(Requirement $requirement): bool
@@ -664,6 +781,7 @@ class ProjectManageController extends Controller
         $value = Str::ascii($value);
         $value = Str::lower($value);
         $value = preg_replace('/\s+/', ' ', $value);
+
         return trim((string) $value);
     }
 
@@ -671,6 +789,10 @@ class ProjectManageController extends Controller
     {
         $requirements = $project->requisitos()
             ->where('requirements.visible', true)
+            ->where(function ($query) {
+                $query->whereNull('requirements.origen')
+                    ->orWhere('requirements.origen', '!=', 'workflow_post_structure');
+            })
             ->orderBy('carpeta')
             ->orderByRaw('custom_project_id IS NOT NULL')
             ->orderBy('orden')
@@ -679,6 +801,17 @@ class ProjectManageController extends Controller
             ->get();
 
         return $this->filterSectorial($requirements, $project);
+    }
+
+    private function assertWorkflowStepBelongsToProject(Project $project, ProjectWorkflowStep $step): void
+    {
+        $step->loadMissing('stage');
+        abort_unless(
+            $step->stage
+                && $step->stage->is_active
+                && $step->stage->funding_source === ($project->funding_source ?: 'sgr'),
+            404
+        );
     }
 
     private function filterSectorial($requirements, Project $project)
@@ -696,8 +829,10 @@ class ProjectManageController extends Controller
                 if ($reqSector === '') {
                     return true;
                 }
+
                 return $this->sectorMatches($reqSector, $sectorNames);
             }
+
             return true;
         })->values();
     }
@@ -718,7 +853,7 @@ class ProjectManageController extends Controller
                 ->values()
                 ->all();
 
-            if (!empty($reqTokens) && !empty($projTokens)) {
+            if (! empty($reqTokens) && ! empty($projTokens)) {
                 sort($reqTokens);
                 sort($projTokens);
                 if ($reqTokens === $projTokens) {
@@ -737,10 +872,10 @@ class ProjectManageController extends Controller
     private function projectSectorCatalog(Project $project): array
     {
         $primary = $project->sectores->first(fn ($sector) => (bool) ($sector->pivot->is_primary ?? false));
-        if (!$primary) {
+        if (! $primary) {
             $primary = $project->sectores->first();
         }
-        $secondary = $project->sectores->filter(fn ($s) => !(bool) ($s->pivot->is_primary ?? false));
+        $secondary = $project->sectores->filter(fn ($s) => ! (bool) ($s->pivot->is_primary ?? false));
         if ($primary) {
             $secondary = $secondary->reject(fn ($s) => (int) $s->id === (int) $primary->id);
         }
@@ -778,6 +913,7 @@ class ProjectManageController extends Controller
         $value = \Illuminate\Support\Str::ascii($value);
         $value = mb_strtolower($value);
         $value = preg_replace('/\s+/', ' ', $value);
+
         return trim($value);
     }
 
@@ -803,6 +939,7 @@ class ProjectManageController extends Controller
             if ($a['order'] === $b['order']) {
                 return strcmp((string) $a['name'], (string) $b['name']);
             }
+
             return $a['order'] <=> $b['order'];
         });
 
@@ -832,7 +969,7 @@ class ProjectManageController extends Controller
 
         foreach ($folderProgress as $folder => $progress) {
             $groupCode = $this->detectTopGroupCode((string) $folder);
-            if (!$groupCode || !isset($summary[$groupCode])) {
+            if (! $groupCode || ! isset($summary[$groupCode])) {
                 continue;
             }
             $summary[$groupCode]['total'] += (int) ($progress['total'] ?? 0);
@@ -903,7 +1040,7 @@ class ProjectManageController extends Controller
     private function authorizeProjectMutation(): void
     {
         $user = auth()->user();
-        if (!$user || !$user->canMutateProjects()) {
+        if (! $user || ! $user->canMutateProjects()) {
             abort(403);
         }
     }

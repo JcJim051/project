@@ -9,18 +9,19 @@ use App\Models\Requirement;
 use App\Models\RequirementEvidence;
 use App\Models\User;
 use App\Services\GoogleDriveService;
+use App\Services\LicensePermitEvidenceService;
 use App\Services\RequirementProgressService;
 use Filament\Notifications\Actions\Action as NotificationAction;
 use Filament\Notifications\Events\DatabaseNotificationsSent;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 class DriveUploadSessionController extends Controller
 {
     private const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
+
     private const DEFAULT_MAX_CONCURRENT = 1;
 
     public function init(Project $project, Requirement $requirement, Request $request, GoogleDriveService $drive)
@@ -34,6 +35,11 @@ class DriveUploadSessionController extends Controller
             'mime_type' => ['nullable', 'string', 'max:255'],
             'index' => ['nullable', 'integer', 'min:1'],
             'total' => ['nullable', 'integer', 'min:1'],
+            'license_permit_status' => [
+                app(LicensePermitEvidenceService::class)->statusIsRequired($requirement) ? 'required' : 'nullable',
+                'string',
+                'in:application,issued',
+            ],
         ])->validate();
 
         $targetName = $this->targetNameForUpload($project, $requirement, (string) $data['name'], (int) ($data['index'] ?? 1), (int) ($data['total'] ?? 1));
@@ -56,6 +62,7 @@ class DriveUploadSessionController extends Controller
             $session->forceFill([
                 'status' => 'uploading',
                 'mime_type' => $mimeType,
+                'license_permit_status' => $data['license_permit_status'] ?? null,
                 'error_message' => null,
                 'failed_at' => null,
                 'started_at' => $session->started_at ?: now(),
@@ -87,6 +94,7 @@ class DriveUploadSessionController extends Controller
             'original_name' => (string) $data['name'],
             'target_name' => $targetName,
             'mime_type' => $mimeType,
+            'license_permit_status' => $data['license_permit_status'] ?? null,
             'size_bytes' => (int) $data['size'],
             'uploaded_bytes' => 0,
             'drive_folder_id' => $sessionInfo['folder_id'] ?? null,
@@ -137,7 +145,8 @@ class DriveUploadSessionController extends Controller
             $session->requirement,
             (string) $data['drive_file_id'],
             (int) $session->user_id,
-            'Carga directa resumible a Drive'
+            'Carga directa resumible a Drive',
+            $session->license_permit_status
         );
 
         $session->forceFill([
@@ -149,6 +158,9 @@ class DriveUploadSessionController extends Controller
         ])->save();
 
         $this->awardFirstValidEvidence($session, $hadValidEvidenceBefore);
+        if ($session->requirement->requiresLicensePermitClassification()) {
+            app(LicensePermitEvidenceService::class)->invalidateWorkflowValidation($session->project);
+        }
         $this->notifyUpload($session->fresh(['project', 'requirement']), true);
 
         return response()->json([
@@ -223,7 +235,14 @@ class DriveUploadSessionController extends Controller
 
         $session->load(['project', 'requirement']);
         $hadValidEvidenceBefore = $this->hasValidEvidence($session->project, $session->requirement);
-        $drive->createUploadedEvidenceFromDriveFile($session->project, $session->requirement, $driveFileId, (int) $session->user_id, 'Carga verificada manualmente');
+        $drive->createUploadedEvidenceFromDriveFile(
+            $session->project,
+            $session->requirement,
+            $driveFileId,
+            (int) $session->user_id,
+            'Carga verificada manualmente',
+            $session->license_permit_status
+        );
         $session->forceFill([
             'status' => 'completed',
             'drive_file_id' => $driveFileId,
@@ -233,6 +252,9 @@ class DriveUploadSessionController extends Controller
         ])->save();
 
         $this->awardFirstValidEvidence($session, $hadValidEvidenceBefore);
+        if ($session->requirement->requiresLicensePermitClassification()) {
+            app(LicensePermitEvidenceService::class)->invalidateWorkflowValidation($session->project);
+        }
         $this->notifyUpload($session->fresh(['project', 'requirement']), true, 'Carga verificada y vinculada');
 
         return response()->json([
@@ -246,7 +268,7 @@ class DriveUploadSessionController extends Controller
     private function assertRequirementIsUploadable(Project $project, Requirement $requirement, GoogleDriveService $drive, int $userId): void
     {
         $project->load('requisitos');
-        if (!$project->requisitos->contains($requirement->id)) {
+        if (! $project->requisitos->contains($requirement->id)) {
             abort(response()->json(['ok' => false, 'message' => 'Este requisito no está marcado para el proyecto.'], 422));
         }
 
@@ -257,17 +279,17 @@ class DriveUploadSessionController extends Controller
             abort(response()->json(['ok' => false, 'message' => "Este requisito se cumple automáticamente con los documentos activos de la carpeta {$targetFolder}."], 422));
         }
 
-        if (!$project->drive_folder_id) {
+        if (! $project->drive_folder_id) {
             abort(response()->json(['ok' => false, 'message' => 'El proyecto no tiene carpeta de Drive configurada.'], 422));
         }
-        if (!$drive->isAuthorized($userId)) {
+        if (! $drive->isAuthorized($userId)) {
             abort(response()->json(['ok' => false, 'message' => 'Drive no está conectado.'], 422));
         }
     }
 
     private function authorizeSession(DriveUploadSession $session): void
     {
-        if ((int) $session->user_id !== (int) auth()->id() && !auth()->user()?->isAdminUser()) {
+        if ((int) $session->user_id !== (int) auth()->id() && ! auth()->user()?->isAdminUser()) {
             abort(403);
         }
     }
@@ -278,9 +300,9 @@ class DriveUploadSessionController extends Controller
         $prefix = $this->renumerationMap($project)[$requirement->id] ?? $requirement->codigo_interno ?? $requirement->numeracion ?? '';
         $baseName = $this->renumberBaseName($requirement);
         $suffix = $total > 1 ? " ({$index})" : '';
-        $targetBase = trim(implode(' ', array_filter([trim((string) $prefix), trim($baseName)], fn ($part) => $part !== '')) . $suffix);
+        $targetBase = trim(implode(' ', array_filter([trim((string) $prefix), trim($baseName)], fn ($part) => $part !== '')).$suffix);
 
-        return $extension ? $targetBase . '.' . $extension : $targetBase;
+        return $extension ? $targetBase.'.'.$extension : $targetBase;
     }
 
     private function renumerationMap(Project $project): array
@@ -301,13 +323,14 @@ class DriveUploadSessionController extends Controller
                 $studyKey = $this->studyRequirementGroupKey($req);
                 $counters[$studyKey] = ($counters[$studyKey] ?? 0) + 1;
                 $map[$req->id] = (string) $counters[$studyKey];
+
                 continue;
             }
 
             $groupCode = $this->detectTopGroupCode((string) ($req->carpeta ?? '')) ?? '99';
             $major = ltrim($groupCode, '0') ?: $groupCode;
             $folderKey = mb_strtolower(trim((string) ($req->carpeta ?? 'sin-carpeta')));
-            $counterKey = $groupCode . '|' . $folderKey;
+            $counterKey = $groupCode.'|'.$folderKey;
             $counters[$counterKey] = ($counters[$counterKey] ?? 0) + 1;
             $map[$req->id] = sprintf('%s.%02d', $major, $counters[$counterKey]);
         }
@@ -330,10 +353,10 @@ class DriveUploadSessionController extends Controller
     {
         $code = trim((string) ($requirement->codigo_interno ?? $requirement->numeracion ?? ''));
         if (preg_match('/^\s*(5\.\d+)/', $code, $matches)) {
-            return 'study|' . $matches[1];
+            return 'study|'.$matches[1];
         }
 
-        return 'study|' . $this->normalizeFolderName((string) ($requirement->carpeta ?? 'sin-carpeta'));
+        return 'study|'.$this->normalizeFolderName((string) ($requirement->carpeta ?? 'sin-carpeta'));
     }
 
     private function isEstudioRequirement(Requirement $requirement): bool
@@ -349,6 +372,7 @@ class DriveUploadSessionController extends Controller
         $value = Str::ascii($value);
         $value = Str::lower($value);
         $value = preg_replace('/\s+/', ' ', $value);
+
         return trim((string) $value);
     }
 
@@ -357,6 +381,7 @@ class DriveUploadSessionController extends Controller
         if (preg_match('/^(\d+)/', trim($folder), $m)) {
             return str_pad((string) ((int) $m[1]), 2, '0', STR_PAD_LEFT);
         }
+
         return null;
     }
 
@@ -370,11 +395,13 @@ class DriveUploadSessionController extends Controller
             ->get();
 
         $visible = $rows->filter(fn ($evidence) => (bool) $evidence->in_drive)->values();
+        $validVisible = $visible->filter(fn ($evidence) => ! $requirement->requiresLicensePermitClassification()
+            || RequirementEvidence::isValidLicensePermitStatus($evidence->license_permit_status));
 
         return [
             'id' => $requirement->id,
-            'has_evidence' => $visible->isNotEmpty(),
-            'valid_evidence_count' => $visible->count(),
+            'has_evidence' => $validVisible->isNotEmpty(),
+            'valid_evidence_count' => $validVisible->count(),
             'evidences' => $visible->map(fn ($evidence) => [
                 'id' => $evidence->id,
                 'name' => $evidence->drive_file_name,
@@ -385,6 +412,9 @@ class DriveUploadSessionController extends Controller
                 'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                 'source' => $evidence->source,
                 'is_valid' => (bool) $evidence->in_drive,
+                'license_permit_status' => $evidence->license_permit_status,
+                'license_permit_status_label' => $evidence->licensePermitStatusLabel(),
+                'classify_url' => route('projects.requirements.classify_evidence', [$project, $requirement, $evidence]),
                 'unlink_url' => route('projects.requirements.unlink_drive_file', [$project, $requirement, $evidence]),
                 'delete_drive_url' => route('projects.requirements.delete_drive_file', [$project, $requirement, $evidence]),
             ])->all(),
@@ -398,6 +428,9 @@ class DriveUploadSessionController extends Controller
                 'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                 'source' => $evidence->source,
                 'is_valid' => (bool) $evidence->in_drive,
+                'license_permit_status' => $evidence->license_permit_status,
+                'license_permit_status_label' => $evidence->licensePermitStatusLabel(),
+                'classify_url' => route('projects.requirements.classify_evidence', [$project, $requirement, $evidence]),
                 'created_at' => optional($evidence->created_at)->format('Y-m-d H:i'),
             ])->all(),
         ];
@@ -414,11 +447,11 @@ class DriveUploadSessionController extends Controller
 
     private function awardFirstValidEvidence(DriveUploadSession $session, bool $hadValidEvidenceBefore): void
     {
-        if ($hadValidEvidenceBefore || !$session->user_id) {
+        if ($hadValidEvidenceBefore || ! $session->user_id) {
             return;
         }
 
-        if (!$this->hasValidEvidence($session->project, $session->requirement)) {
+        if (! $this->hasValidEvidence($session->project, $session->requirement)) {
             return;
         }
 
@@ -440,6 +473,7 @@ class DriveUploadSessionController extends Controller
             'original_name' => $session->original_name,
             'target_name' => $session->target_name,
             'mime_type' => $session->mime_type,
+            'license_permit_status' => $session->license_permit_status,
             'size_bytes' => (int) $session->size_bytes,
             'uploaded_bytes' => (int) $session->uploaded_bytes,
             'drive_file_id' => $session->drive_file_id,
@@ -461,16 +495,16 @@ class DriveUploadSessionController extends Controller
     private function notifyUpload(DriveUploadSession $session, bool $success, ?string $title = null): void
     {
         $user = User::query()->find((int) $session->user_id);
-        if (!$user) {
+        if (! $user) {
             return;
         }
 
-        $projectName = (string) ($session->project?->nombre_clave ?: $session->project?->nombre ?: ('Proyecto #' . $session->project_id));
+        $projectName = (string) ($session->project?->nombre_clave ?: $session->project?->nombre ?: ('Proyecto #'.$session->project_id));
         $notification = FilamentNotification::make()
             ->title($title ?: ($success ? 'Carga completada' : 'Carga fallida'))
             ->body($success
                 ? "{$projectName}: {$session->target_name} quedó cargado en Drive."
-                : "{$projectName}: no se pudo cargar {$session->original_name}. " . ((string) $session->error_message ?: 'Revisa la cola de carga.'))
+                : "{$projectName}: no se pudo cargar {$session->original_name}. ".((string) $session->error_message ?: 'Revisa la cola de carga.'))
             ->icon($success ? 'heroicon-o-check-circle' : 'heroicon-o-x-circle')
             ->iconColor($success ? 'success' : 'danger')
             ->actions([

@@ -89,6 +89,7 @@
                     'count_in_progress' => (bool) ($status['count_in_progress'] ?? true),
                     'evidence_format_rule' => $req->evidence_format_rule,
                     'evidence_format_label' => \App\Models\Requirement::evidenceFormatRuleLabel($req->evidence_format_rule),
+                    'requires_license_permit_classification' => $req->requiresLicensePermitClassification(),
                     'upload_accept' => match ($req->evidence_format_rule) {
                         \App\Models\Requirement::EVIDENCE_RULE_EXCEL => '.xls,.xlsx,.xlsm,.csv',
                         \App\Models\Requirement::EVIDENCE_RULE_POWERPOINT => '.ppt,.pptx',
@@ -117,6 +118,9 @@
                             'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                             'source' => $evidence->source,
                             'is_valid' => (bool) $evidence->in_drive,
+                            'license_permit_status' => $evidence->license_permit_status,
+                            'license_permit_status_label' => $evidence->licensePermitStatusLabel(),
+                            'classify_url' => route('projects.requirements.classify_evidence', [$project, $req, $evidence]),
                             'unlink_url' => route('projects.requirements.unlink_drive_file', [$project, $req, $evidence]),
                             'delete_drive_url' => route('projects.requirements.delete_drive_file', [$project, $req, $evidence]),
                         ];
@@ -124,7 +128,7 @@
                     'history' => $reqEvidences
                         ->sortByDesc('id')
                         ->values()
-                        ->map(function ($evidence) {
+                        ->map(function ($evidence) use ($project, $req) {
                             return [
                                 'id' => $evidence->id,
                                 'name' => $evidence->drive_file_name,
@@ -135,6 +139,9 @@
                                 'download_url' => route('requirement-evidences.download', ['evidence' => $evidence]),
                                 'source' => $evidence->source,
                                 'is_valid' => (bool) $evidence->in_drive,
+                                'license_permit_status' => $evidence->license_permit_status,
+                                'license_permit_status_label' => $evidence->licensePermitStatusLabel(),
+                                'classify_url' => route('projects.requirements.classify_evidence', [$project, $req, $evidence]),
                                 'created_at' => optional($evidence->created_at)->format('Y-m-d H:i'),
                             ];
                         })
@@ -347,6 +354,153 @@
         }
         .group-btn {
             border-bottom: 1px solid #eef2f7;
+        }
+        .project-action-compact {
+            display: inline-flex;
+            min-height: 24px;
+            flex: 0 0 auto;
+            align-items: center;
+            justify-content: center;
+            padding: 2px 8px;
+            border-width: 1px;
+            border-style: solid;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.25;
+            text-decoration: none;
+            white-space: nowrap;
+            scroll-snap-align: start;
+        }
+        .project-panel-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        .project-action-rail {
+            display: flex;
+            min-width: 0;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 6px;
+        }
+        .project-action-form {
+            display: flex;
+            flex: 0 0 auto;
+        }
+        .project-action--neutral {
+            border-color: #cbd5e1 !important;
+            background-color: #f8fafc !important;
+            color: #334155 !important;
+        }
+        .project-action--neutral:hover {
+            border-color: #94a3b8 !important;
+            background-color: #f1f5f9 !important;
+            color: #1e293b !important;
+        }
+        .project-status-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            padding-top: 0.6rem;
+            border-top: 1px solid #eef2f7;
+        }
+        .project-progress-summary {
+            display: flex;
+            min-width: 0;
+            align-items: center;
+            gap: 0.8rem;
+            color: #64748b;
+            font-size: 12px;
+        }
+        .project-progress-copy {
+            display: flex;
+            align-items: baseline;
+            gap: 0.45rem;
+            white-space: nowrap;
+        }
+        .project-progress-summary strong {
+            color: #334155;
+        }
+        .project-progress-count {
+            color: #64748b;
+            font-weight: 600;
+        }
+        .project-progress-track {
+            width: 14rem;
+            height: 11px;
+            overflow: hidden;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #f1f5f9;
+            box-shadow: inset 0 1px 2px rgb(15 23 42 / 10%);
+        }
+        .project-progress-value {
+            height: 100%;
+            border-radius: 999px;
+            transition: width 250ms ease;
+        }
+        .project-progress-value--danger {
+            background: linear-gradient(90deg, #f87171 0%, #dc2626 100%);
+            box-shadow: 0 0 0 1px rgb(153 27 27 / 12%);
+        }
+        .project-progress-value--warning {
+            background: linear-gradient(90deg, #fbbf24 0%, #d97706 100%);
+            box-shadow: 0 0 0 1px rgb(146 64 14 / 12%);
+        }
+        .project-progress-value--success {
+            background: linear-gradient(90deg, #4ade80 0%, #16a34a 100%);
+            box-shadow: 0 0 0 1px rgb(22 101 52 / 12%);
+        }
+        .project-pending-filter {
+            display: inline-flex;
+            min-height: 24px;
+            flex: 0 0 auto;
+            align-items: center;
+            justify-content: center;
+            padding: 2px 8px;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #fff;
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.25;
+            transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+        }
+        .project-pending-filter:hover {
+            border-color: #94a3b8;
+            background: #f8fafc;
+            color: #334155;
+        }
+        .project-pending-filter--active {
+            border-color: #fb923c !important;
+            background: #fed7aa !important;
+            color: #7c2d12 !important;
+        }
+        .attachment-package-action--enabled {
+            border-color: #fb923c !important;
+            background-color: #fed7aa !important;
+            color: #7c2d12 !important;
+            box-shadow: 0 2px 5px rgb(249 115 22 / 18%);
+        }
+        .attachment-package-action--enabled:hover {
+            border-color: #f97316 !important;
+            background-color: #fdba74 !important;
+            color: #7c2d12 !important;
+        }
+        .attachment-package-action--disabled {
+            border-color: #cbd5e1 !important;
+            background-color: #f1f5f9 !important;
+            color: #64748b !important;
+        }
+        .attachment-package-action--disabled:hover {
+            background-color: #e2e8f0 !important;
+            color: #475569 !important;
         }
 
         .gp-modal-overlay {
@@ -571,6 +725,17 @@
             font-size: .73rem;
         }
         @media (max-width: 640px) {
+            .project-status-row {
+                align-items: stretch;
+                flex-direction: column-reverse;
+            }
+            .project-pending-filter {
+                align-self: flex-end;
+            }
+            .project-progress-copy {
+                flex-wrap: wrap;
+                white-space: normal;
+            }
             .upload-card-top {
                 flex-direction: column;
             }
@@ -588,6 +753,33 @@
             }
         }
         @media (max-width: 900px) {
+            .project-panel-heading {
+                align-items: stretch;
+                flex-direction: column;
+            }
+            .project-action-rail {
+                width: 100%;
+                justify-content: flex-start;
+                overflow-x: auto;
+                overscroll-behavior-x: contain;
+                padding-bottom: 4px;
+                scroll-snap-type: x proximity;
+                scrollbar-width: thin;
+                -webkit-overflow-scrolling: touch;
+            }
+            .project-status-row {
+                align-items: flex-end;
+                gap: 0.5rem;
+            }
+            .project-progress-summary {
+                flex: 1 1 auto;
+                align-items: flex-start;
+                flex-direction: column;
+                gap: 0.35rem;
+            }
+            .project-progress-track {
+                width: 100%;
+            }
             .manage-main {
                 grid-template-columns: 1fr;
             }
@@ -610,6 +802,9 @@
                 selectedGroupCode: null,
                 selectedSubgroupKey: null,
                 selectedRequirementId: null,
+                workflowStage: 0,
+                workflowStep: 0,
+                workflowRequirement: 0,
                 showEvidence: {},
                 onlyPendingGlobal: false,
                 csrfToken: @js(csrf_token()),
@@ -620,6 +815,7 @@
                 drivePickerFiles: [],
                 drivePickerSelected: [],
                 drivePickerMessage: "",
+                drivePickerFileStatuses: {},
                 bulkOpen: false,
                 bulkLoading: false,
                 bulkFiles: [],
@@ -648,6 +844,23 @@
                 customCertificationError: '',
                 init() {
                     this.selectInitial();
+                    this.$nextTick(() => this.mountStructurePanel());
+                },
+                selectWorkflowStage(index) {
+                    this.workflowStage = index;
+                    this.workflowStep = 0;
+                    this.workflowRequirement = 0;
+                },
+                selectWorkflowStep(index) {
+                    this.workflowStep = index;
+                    this.workflowRequirement = 0;
+                },
+                mountStructurePanel() {
+                    const panel = document.getElementById('applicable-requirements-panel');
+                    const host = document.getElementById('workflow-structure-host');
+                    if (panel && host && panel.parentElement !== host) {
+                        host.appendChild(panel);
+                    }
                 },
                 groupByCode(code) {
                     return this.groups.find(g => g.code === code) || null;
@@ -931,16 +1144,23 @@
                     if (!req || req.is_composite_parent) return;
                     this.drivePickerOpen = true;
                     this.drivePickerSelected = [];
+                    this.drivePickerFileStatuses = {};
                     await this.loadDriveFiles(req);
                 },
                 closeDrivePicker() {
                     this.drivePickerOpen = false;
                     this.drivePickerSelected = [];
                     this.drivePickerMessage = "";
+                    this.drivePickerFileStatuses = {};
                 },
                 async submitManualLink() {
                     const req = this.currentRequirement();
                     if (!req || this.drivePickerSelected.length === 0) return;
+                    if (req.requires_license_permit_classification
+                        && this.drivePickerSelected.some(fileId => !this.drivePickerFileStatuses[fileId])) {
+                        this.drivePickerMessage = "Debes clasificar individualmente cada documento seleccionado.";
+                        return;
+                    }
                     this.drivePickerLoading = true;
                     this.drivePickerMessage = "";
                     try {
@@ -955,6 +1175,7 @@
                             credentials: "same-origin",
                             body: JSON.stringify({
                                 file_ids: this.drivePickerSelected,
+                                file_statuses: this.drivePickerFileStatuses,
                             }),
                         });
                         const data = await response.json();
@@ -1020,6 +1241,8 @@
                         requirement_id: req.id,
                         title: req.title,
                         selected_file_id: this.suggestedFileIdFor(req, this.bulkFiles),
+                        requires_license_permit_classification: !!req.requires_license_permit_classification,
+                        license_permit_status: "",
                     }));
                 },
                 closeBulkLinker() {
@@ -1036,8 +1259,13 @@
                         .map(row => ({
                             requirement_id: row.requirement_id,
                             file_id: row.selected_file_id,
+                            license_permit_status: row.license_permit_status || null,
                         }));
                     if (links.length === 0) return;
+                    if (this.bulkRows.some(row => row.selected_file_id && row.requires_license_permit_classification && !row.license_permit_status)) {
+                        this.bulkReport = { error: "Clasifica cada licencia o permiso seleccionado." };
+                        return;
+                    }
 
                     this.bulkLoading = true;
                     this.bulkReport = null;
@@ -1081,6 +1309,29 @@
                         window.location.reload();
                     } catch (error) {
                         alert(error.message || "Error quitando la asignación.");
+                    }
+                },
+                async classifyEvidence(evidence, status) {
+                    if (!evidence?.classify_url || !status) return;
+                    try {
+                        const response = await fetch(evidence.classify_url, {
+                            method: "PATCH",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Accept": "application/json",
+                                "X-CSRF-TOKEN": this.csrfToken,
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                            credentials: "same-origin",
+                            body: JSON.stringify({ license_permit_status: status }),
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.message || "No se pudo actualizar la clasificación.");
+                        evidence.license_permit_status = data.license_permit_status;
+                        evidence.license_permit_status_label = data.license_permit_status_label;
+                        window.location.reload();
+                    } catch (error) {
+                        alert(error.message || "No se pudo actualizar la clasificación.");
                     }
                 },
                 async deleteEvidenceFromDrive(evidence) {
@@ -1308,29 +1559,34 @@
                     }
                     const input = event?.target;
                     if (!input || !input.files || input.files.length === 0) return;
-                    const file = input.files[0];
                     this.uploadQueue = this.uploadQueue.filter(item => ['initializing', 'uploading'].includes(item.status));
-                    this.uploadQueueSeq += 1;
-                    this.uploadQueue.push({
-                        local_id: `${Date.now()}-${this.uploadQueueSeq}`,
-                        requirement_id: req.id,
-                        requirement_title: req.title,
-                        init_url: req.large_upload_init_url,
-                        file,
-                        name: file.name,
-                        size: file.size,
-                        mime_type: this.normalizeUploadMimeType(file),
-                        index: 1,
-                        total: 1,
-                        status: 'pending',
-                        completed_by_verify: false,
-                        progress: 0,
-                        uploaded_bytes: 0,
-                        session: null,
-                        error: '',
-                        abortController: null,
+                    const files = Array.from(input.files);
+                    files.forEach((file, index) => {
+                        this.uploadQueueSeq += 1;
+                        this.uploadQueue.push({
+                            local_id: `${Date.now()}-${this.uploadQueueSeq}`,
+                            requirement_id: req.id,
+                            requirement_title: req.title,
+                            init_url: req.large_upload_init_url,
+                            file,
+                            name: file.name,
+                            size: file.size,
+                            mime_type: this.normalizeUploadMimeType(file),
+                            index: index + 1,
+                            total: files.length,
+                            requires_license_permit_classification: !!req.requires_license_permit_classification,
+                            license_permit_status: '',
+                            status: 'pending',
+                            completed_by_verify: false,
+                            progress: 0,
+                            uploaded_bytes: 0,
+                            session: null,
+                            error: '',
+                            abortController: null,
+                        });
                     });
-                    this.setUploadMessage('success', 'Archivo listo. Presiona Cargar para iniciar.');
+                    this.uploadModalOpen = true;
+                    this.setUploadMessage('success', `${files.length} archivo(s) listo(s). Clasifica cada documento y presiona Cargar.`);
                 },
                 hasPendingUpload() {
                     return this.uploadQueue.some(item => item.status === 'pending');
@@ -1345,6 +1601,10 @@
                     const next = this.uploadQueue.find(item => item.status === 'pending');
                     if (!next) {
                         this.setUploadMessage('error', 'Selecciona un archivo antes de cargar.');
+                        return;
+                    }
+                    if (next.requires_license_permit_classification && !next.license_permit_status) {
+                        this.setUploadMessage('error', `Clasifica el archivo ${next.name} antes de cargarlo.`);
                         return;
                     }
 
@@ -1381,6 +1641,7 @@
                                     mime_type: item.mime_type,
                                     index: item.index,
                                     total: item.total,
+                                    license_permit_status: item.license_permit_status || null,
                                 }),
                             });
                             const initData = await initResponse.json().catch(() => ({}));
@@ -1693,8 +1954,6 @@
     <div class="py-1">
         <div
             class="w-full space-y-3"
-            x-data="projectManagePanelData()"
-            x-init="init()"
         >
             @if (session('status'))
                 <div class="rounded-md bg-emerald-50 p-4 text-emerald-700 text-sm">
@@ -1714,6 +1973,9 @@
                 </div>
             @endif
 
+            @include('projects.partials.post-structure-workflow')
+
+            <div x-show="workflowStage === 0" x-cloak class="space-y-3">
             @if (($recentDriveUploadSessions ?? collect())->isNotEmpty())
                 <div class="rounded-xl border border-gray-200 bg-white p-3 text-xs text-gray-700">
                     <div class="mb-2 font-semibold text-gray-800">Cargas recientes</div>
@@ -1807,57 +2069,77 @@
                 </details>
             @endif
 
-            <div class="manage-shell shadow-sm p-4 sm:p-6">
-                <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div id="applicable-requirements-panel" class="manage-shell shadow-sm p-4 sm:p-6">
+                <div class="project-panel-heading">
                     <div>
                         <h3 class="text-lg font-semibold text-gray-800">Requisitos Aplicables</h3>
                         <p class="text-sm text-gray-500">Panel maestro-detalle para gestionar evidencias por grupo.</p>
                     </div>
-                    <div class="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+                    <div class="project-action-rail" role="toolbar" aria-label="Acciones del proyecto">
                         @if (!empty($mgaUrl))
                             <a
                                 href="{{ $mgaUrl }}"
                                 target="_blank"
                                 rel="noopener"
-                                style="display:inline-flex;align-items:center;padding:2px 8px;border:1px solid #86efac;border-radius:6px;background:#ecfdf5;color:#15803d;font-size:12px;font-weight:600;text-decoration:none;">
+                                title="Abrir el proyecto en MGA en una pestaña nueva"
+                                class="project-action-compact project-action--neutral">
                                 MGA
                             </a>
                         @endif
                         <a
-                            href="{{ route('filament.admin.resources.projects.bank', ['record' => $project]) }}"
-                            class="h-8 px-3 inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition-colors">
-                            Generar documentos del banco
+                            href="{{ route('filament.admin.resources.projects.documents', ['record' => $project]) }}"
+                            class="project-action-compact project-action--neutral">
+                            Generar certificaciones
                         </a>
                         <a
-                            href="{{ route('filament.admin.resources.projects.documents', ['record' => $project]) }}"
-                            class="h-8 px-3 inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors">
-                            Crear certificaciones
+                            href="{{ route('filament.admin.resources.projects.bank', ['record' => $project]) }}"
+                            class="project-action-compact project-action--neutral">
+                            Generar documentos del banco
                         </a>
-                        <form method="POST" action="{{ route('projects.manage.renumber', $project) }}" onsubmit="return confirm('¿Renumerar archivos cargados de este proyecto?');">
+                        <form class="project-action-form" method="POST" action="{{ route('projects.manage.renumber', $project) }}" onsubmit="return confirm('¿Renumerar archivos cargados de este proyecto?');">
                             @csrf
                             <button
                                 type="submit"
-                                class="h-8 px-3 inline-flex items-center rounded-md border border-fuchsia-300 bg-fuchsia-50 text-fuchsia-700 text-xs font-medium hover:bg-fuchsia-100 transition-colors">
+                                class="project-action-compact project-action--neutral">
                                 Renumerar archivos
                             </button>
                         </form>
-                        <button
-                            type="button"
-                            @click="toggleOnlyPendingGlobal()"
-                            class="px-2 py-1 rounded border text-xs transition"
-                            :class="onlyPendingGlobal ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'">
-                            Solo pendientes (Global)
-                        </button>
-                        <div class="text-sm text-gray-600">
-                            <span class="font-semibold text-gray-800">Avance general:</span>
-                            {{ $overallPercent }}% ({{ $folderProgress ? array_sum(array_column($folderProgress, 'done')) : 0 }} de {{ $folderProgress ? array_sum(array_column($folderProgress, 'total')) : 0 }})
-                        </div>
+                        <a
+                            href="{{ route('filament.admin.resources.projects.attachments', ['record' => $project]) }}"
+                            title="{{ $canGenerateAttachmentPackage ? 'La generación de carteras está habilitada' : 'La generación de carteras todavía no está habilitada' }}"
+                            class="project-action-compact {{ $canGenerateAttachmentPackage
+                                ? 'attachment-package-action--enabled'
+                                : 'attachment-package-action--disabled' }}">
+                            Generar carteras
+                        </a>
                     </div>
                 </div>
-                <div class="mb-4">
-                    <div class="h-1.5 w-44 rounded-full bg-gray-200">
-                        <div class="h-1.5 rounded-full bg-emerald-500" style="width: {{ $overallPercent }}%"></div>
+                @php
+                    $overallProgressTone = $overallPercent >= 80
+                        ? 'success'
+                        : ($overallPercent >= 40 ? 'warning' : 'danger');
+                @endphp
+                <div class="project-status-row">
+                    <div class="project-progress-summary">
+                        <div class="project-progress-copy">
+                            <strong>Avance general: {{ $overallPercent }}%</strong>
+                            <span class="project-progress-count">
+                                {{ (int) ($overallProgress['done'] ?? 0) }} de {{ (int) ($overallProgress['total'] ?? 0) }} documentos
+                            </span>
+                        </div>
+                        <div class="project-progress-track" role="progressbar" aria-label="Avance general del proyecto" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ $overallPercent }}">
+                            <div class="project-progress-value project-progress-value--{{ $overallProgressTone }}" style="width: {{ $overallPercent }}%"></div>
+                        </div>
                     </div>
+                    <button
+                        type="button"
+                        @click="toggleOnlyPendingGlobal()"
+                        :aria-pressed="onlyPendingGlobal ? 'true' : 'false'"
+                        title="Mostrar únicamente requisitos pendientes"
+                        class="project-pending-filter"
+                        :class="{ 'project-pending-filter--active': onlyPendingGlobal }">
+                        Solo pendientes
+                    </button>
                 </div>
 
                 @if ($requirements->isEmpty())
@@ -1868,7 +2150,7 @@
                     <div class="manage-main">
                         <aside class="pane pane-split manage-left p-3">
                             <div class="pane-head mb-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                                <div class="text-sm font-semibold text-gray-800">Grupos de requisitos (01-05)</div>
+                                <div class="text-sm font-semibold text-gray-800">Grupos de requisitos</div>
                             </div>
                             <div class="pane-body px-1 py-1 space-y-3">
                                 <template x-for="group in groups" :key="group.code">
@@ -1996,7 +2278,7 @@
                                                                 Cuenta como válido: <span class="font-semibold" x-text="currentRequirement().evidence_format_label || 'Sin regla'"></span>
                                                             </div>
                                                             <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                                                <input type="file" x-ref="requirementUploadInput" :accept="currentRequirement().upload_accept || null" @change="enqueueCurrentRequirement($event)" class="block min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
+                                                                <input type="file" multiple x-ref="requirementUploadInput" :accept="currentRequirement().upload_accept || null" @change="enqueueCurrentRequirement($event)" class="block min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-2 py-2 text-xs text-gray-700">
                                                                 <button
                                                                     type="button"
                                                                     @click="processUploadQueue()"
@@ -2065,6 +2347,19 @@
                                                                 </div>
                                                             </div>
                                                             <div class="mt-1 text-[11px] text-emerald-600">Evidencia vigente</div>
+                                                            <template x-if="currentRequirement().requires_license_permit_classification">
+                                                                <label class="mt-2 block">
+                                                                    <span class="mb-1 block text-[10px] font-semibold text-gray-600">Clasificación obligatoria</span>
+                                                                    <select
+                                                                        :value="currentEvidence(currentRequirement()).license_permit_status || ''"
+                                                                        @change="classifyEvidence(currentEvidence(currentRequirement()), $event.target.value)"
+                                                                        class="w-full rounded-md border-gray-300 bg-white text-xs">
+                                                                        <option value="">Por clasificar</option>
+                                                                        <option value="application">Solicitud o radicado</option>
+                                                                        <option value="issued">Licencia o permiso expedido</option>
+                                                                    </select>
+                                                                </label>
+                                                            </template>
                                                         </div>
                                                     </template>
                                                     <button type="button" @click="openHistoryModal()" class="h-8 px-3 rounded-md border border-gray-300 bg-white text-gray-700 text-xs font-medium hover:bg-gray-50">
@@ -2150,6 +2445,15 @@
                                     <div class="min-w-0">
                                         <div class="font-medium text-gray-700 truncate" x-text="file.name"></div>
                                         <div class="text-[11px] text-gray-500" x-text="file.ext ? `.${file.ext}` : 'sin extensión'"></div>
+                                        <select
+                                            x-show="currentRequirement() && currentRequirement().requires_license_permit_classification && drivePickerSelected.includes(file.id)"
+                                            x-model="drivePickerFileStatuses[file.id]"
+                                            @click.stop
+                                            class="mt-2 w-full rounded-md border-gray-300 text-xs">
+                                            <option value="">Clasificar documento...</option>
+                                            <option value="application">Solicitud o radicado</option>
+                                            <option value="issued">Licencia o permiso expedido</option>
+                                        </select>
                                     </div>
                                 </label>
                             </template>
@@ -2179,6 +2483,7 @@
                                         <tr>
                                             <th class="px-3 py-2 text-left">Requisito</th>
                                             <th class="px-3 py-2 text-left">Archivo vinculado</th>
+                                            <th class="px-3 py-2 text-left">Clasificación</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -2192,6 +2497,17 @@
                                                             <option :value="file.id" x-text="file.name"></option>
                                                         </template>
                                                     </select>
+                                                </td>
+                                                <td class="px-3 py-2">
+                                                    <select
+                                                        x-show="row.requires_license_permit_classification"
+                                                        x-model="row.license_permit_status"
+                                                        class="w-full rounded-md border-gray-300 text-xs">
+                                                        <option value="">Seleccionar...</option>
+                                                        <option value="application">Solicitud o radicado</option>
+                                                        <option value="issued">Licencia o permiso expedido</option>
+                                                    </select>
+                                                    <span x-show="!row.requires_license_permit_classification" class="text-gray-400">No aplica</span>
                                                 </td>
                                             </tr>
                                         </template>
@@ -2246,6 +2562,17 @@
                                         <strong style="color:#374151;">Requisito destino:</strong>
                                         <span x-text="item.requirement_title || '-'"></span>
                                     </div>
+                                    <label x-show="item.requires_license_permit_classification" class="mt-3 block">
+                                        <span class="mb-1 block text-xs font-semibold text-gray-700">Tipo de documento</span>
+                                        <select
+                                            x-model="item.license_permit_status"
+                                            :disabled="item.status !== 'pending'"
+                                            class="w-full rounded-md border-gray-300 bg-white text-xs disabled:bg-gray-100">
+                                            <option value="">Seleccionar...</option>
+                                            <option value="application">Solicitud o radicado</option>
+                                            <option value="issued">Licencia o permiso expedido</option>
+                                        </select>
+                                    </label>
                                     <div x-show="item.error" class="upload-error" x-text="item.error"></div>
                                 </div>
                                 <div class="upload-actions">
@@ -2342,6 +2669,16 @@
                                         <span class="mx-1">·</span>
                                         <span :class="item.is_valid ? 'text-emerald-600' : 'text-amber-700'" x-text="item.is_valid ? 'vigente' : 'histórico/no disponible'"></span>
                                     </div>
+                                    <template x-if="currentRequirement() && currentRequirement().requires_license_permit_classification">
+                                        <select
+                                            :value="item.license_permit_status || ''"
+                                            @change="classifyEvidence(item, $event.target.value)"
+                                            class="mt-2 w-full rounded-md border-gray-300 bg-white text-xs">
+                                            <option value="">Por clasificar</option>
+                                            <option value="application">Solicitud o radicado</option>
+                                            <option value="issued">Licencia o permiso expedido</option>
+                                        </select>
+                                    </template>
                                 </div>
                             </template>
                         </div>
@@ -2398,17 +2735,6 @@
                 
             </div>
 
-            <div class="rounded-md border border-indigo-100 bg-indigo-50/40 p-3 flex items-center justify-between mt-3">
-                <div>
-                    <div class="text-xs font-semibold text-indigo-700">Paquete PDF con adjuntos</div>
-                </div>
-                <a
-                    href="{{ route('filament.admin.resources.projects.attachments', ['record' => $project]) }}"
-                    class="px-3 py-1.5 rounded-md bg-white text-indigo-700 text-xs font-semibold border border-indigo-200 hover:bg-indigo-50">
-                    Abrir modulo
-                </a>
-            </div>
-
             @if (!$driveConnected && auth()->user()?->isAdminUser())
                 <div class="rounded-md bg-amber-50 p-4 text-amber-700 text-sm flex items-center justify-between">
                     <span>Conecta Google Drive para sincronizar evidencias automaticamente.</span>
@@ -2437,6 +2763,7 @@
                     </div>
                 </div>
             @endif
+            </div>
 
         </div>
     </div>
