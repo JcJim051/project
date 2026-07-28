@@ -46,7 +46,7 @@ class ProjectWorkflowAndBankRequestTest extends TestCase
         $stages = $service->buildForProject($project);
 
         $this->assertSame(
-            ['Estructuración', 'Preparación institucional', 'Vigencias futuras', 'Viabilidad y aprobación', 'Incorporación', 'Banco de Programas y Proyectos'],
+            ['Estructuración', 'Preparación institucional', 'Vigencias futuras', 'Viabilidad y aprobación', 'Incorporación', 'Banco de Programas y Proyectos', 'Precontractual'],
             $stages->pluck('name')->all()
         );
         $this->assertSame('not_applicable', $stages->firstWhere('name', 'Vigencias futuras')['status']);
@@ -72,7 +72,44 @@ class ProjectWorkflowAndBankRequestTest extends TestCase
             ->firstWhere('name', 'Preparación institucional')['steps']->first();
         $this->assertTrue($validatedStep['validated']);
         $this->assertSame('validated', $validatedStep['status']);
+    }
 
+    public function test_precontractual_workflow_seed_is_idempotent(): void
+    {
+        $migration = require database_path(
+            'migrations/2026_07_28_220000_seed_precontractual_workflow_stages.php'
+        );
+
+        $migration->up();
+        $migration->up();
+
+        $stages = ProjectWorkflowStage::query()
+            ->where('name', 'Precontractual')
+            ->whereIn('funding_source', ['sgr', 'propios'])
+            ->get();
+        $requirement = Requirement::query()
+            ->where('codigo_interno', 'WF-PRE-LIC')
+            ->first();
+
+        $this->assertCount(2, $stages);
+        $this->assertNotNull($requirement);
+        $this->assertSame(
+            2,
+            ProjectWorkflowStep::query()
+                ->whereIn('stage_id', $stages->pluck('id'))
+                ->where('completion_rule', ProjectWorkflowStep::COMPLETION_RULE_LICENSE_PERMIT_DEFINITIVES)
+                ->count()
+        );
+        $this->assertSame(
+            2,
+            ProjectWorkflowStepRequirement::query()
+                ->where('requirement_id', $requirement->id)
+                ->whereIn(
+                    'step_id',
+                    ProjectWorkflowStep::query()->whereIn('stage_id', $stages->pluck('id'))->pluck('id')
+                )
+                ->count()
+        );
     }
 
     public function test_fbs01_generation_uses_project_id_and_preserves_workbook_assets(): void
@@ -313,6 +350,7 @@ class ProjectWorkflowAndBankRequestTest extends TestCase
             2,
             ProjectWorkflowStep::query()
                 ->where('completion_rule', ProjectWorkflowStep::COMPLETION_RULE_LICENSE_PERMIT_DEFINITIVES)
+                ->whereHas('stage', fn ($query) => $query->where('name', 'Precontractual pruebas'))
                 ->count()
         );
     }
