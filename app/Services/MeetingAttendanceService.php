@@ -307,14 +307,23 @@ class MeetingAttendanceService
         $outputDir = dirname($xlsxPath);
         $templatePath = $this->templatePath();
         $soffice = $this->resolveSofficeBinary();
+        $officeProfileDir = $this->makeTempDir('meeting-attendance-office-' . $session->id);
         $process = new Process([
             $soffice,
             '--headless',
+            '--nologo',
+            '--nofirststartwizard',
+            '--norestore',
+            '-env:UserInstallation=' . $this->fileUriFromPath($officeProfileDir),
             '--convert-to',
             'pdf',
             '--outdir',
             $outputDir,
             $xlsxPath,
+        ]);
+        $process->setEnv([
+            'HOME' => $officeProfileDir,
+            'TMPDIR' => $outputDir,
         ]);
         $process->setTimeout(120);
         $process->run();
@@ -811,6 +820,14 @@ class MeetingAttendanceService
         }
 
         throw new \RuntimeException('No se encontró LibreOffice o soffice para convertir la asistencia a PDF.');
+    }
+
+    private function fileUriFromPath(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
+        $segments = array_map('rawurlencode', explode('/', $path));
+
+        return 'file://' . implode('/', $segments);
     }
 
     private function extractTemplateHeaderFooterImages(string $templatePath): array
