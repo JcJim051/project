@@ -30,19 +30,26 @@ class MeetingAttendanceService
         $managedTemplate = DocumentTemplate::query()
             ->where('template_type', 'meeting_attendance')
             ->where('file_kind', 'xlsx')
-            ->latest('updated_at')
-            ->latest('id')
+            ->where('is_active', true)
+            ->orderByDesc('effective_at')
+            ->orderByDesc('id')
             ->first();
 
-        if ($managedTemplate && $managedTemplate->ruta_archivo) {
-            $storedPath = storage_path('app/' . ltrim($managedTemplate->ruta_archivo, '/'));
-
-            if (is_file($storedPath)) {
-                return $storedPath;
-            }
+        if ($managedTemplate?->ruta_archivo && Storage::disk('local')->exists($managedTemplate->ruta_archivo)) {
+            return Storage::disk('local')->path($managedTemplate->ruta_archivo);
         }
 
-        return (string) config('meeting_attendance.template_path');
+        $fallbackTemplate = (string) config('meeting_attendance.fallback_template_path');
+        if ($fallbackTemplate !== '' && is_file($fallbackTemplate)) {
+            return $fallbackTemplate;
+        }
+
+        $configuredTemplate = (string) config('meeting_attendance.template_path');
+        if ($configuredTemplate !== '' && is_file($configuredTemplate)) {
+            return $configuredTemplate;
+        }
+
+        throw new \RuntimeException('No hay una plantilla oficial activa para asistencias a reuniones.');
     }
 
     public function templateVersion(): string
@@ -50,8 +57,9 @@ class MeetingAttendanceService
         $managedTemplate = DocumentTemplate::query()
             ->where('template_type', 'meeting_attendance')
             ->where('file_kind', 'xlsx')
-            ->latest('updated_at')
-            ->latest('id')
+            ->where('is_active', true)
+            ->orderByDesc('effective_at')
+            ->orderByDesc('id')
             ->first();
 
         if ($managedTemplate) {
@@ -298,7 +306,7 @@ class MeetingAttendanceService
         $xlsxPath = $this->buildOfficialXlsx($session);
         $outputDir = dirname($xlsxPath);
         $templatePath = $this->templatePath();
-        $soffice = (string) config('meeting_attendance.soffice_path');
+        $soffice = $this->resolveSofficeBinary();
         $process = new Process([
             $soffice,
             '--headless',
@@ -765,6 +773,44 @@ class MeetingAttendanceService
         }
 
         File::move($stampedPath, $pdfPath);
+    }
+
+    private function resolveSofficeBinary(): string
+    {
+        $configured = trim((string) config('meeting_attendance.soffice_path'));
+        $candidates = array_values(array_filter(array_unique([
+            $configured,
+            '/usr/bin/libreoffice',
+            '/usr/bin/soffice',
+            '/usr/local/bin/libreoffice',
+            '/usr/local/bin/soffice',
+            'libreoffice',
+            'soffice',
+        ])));
+
+        foreach ($candidates as $candidate) {
+            if (str_contains($candidate, DIRECTORY_SEPARATOR)) {
+                if (is_executable($candidate)) {
+                    return $candidate;
+                }
+
+                continue;
+            }
+
+            try {
+                $process = new Process([$candidate, '--version']);
+                $process->setTimeout(10);
+                $process->run();
+
+                if ($process->isSuccessful()) {
+                    return $candidate;
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        throw new \RuntimeException('No se encontró LibreOffice o soffice para convertir la asistencia a PDF.');
     }
 
     private function extractTemplateHeaderFooterImages(string $templatePath): array

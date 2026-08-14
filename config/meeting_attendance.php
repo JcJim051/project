@@ -1,17 +1,15 @@
 <?php
 
 return [
-    'template_path' => env(
-        'MEETING_ATTENDANCE_TEMPLATE_PATH',
-        '/Users/jonathanjimenez/Downloads/102-SIG-FR-007 REGISTRO DE ASISTENCIA (10).xlsx'
-    ),
+    'template_path' => env('MEETING_ATTENDANCE_TEMPLATE_PATH'),
+    'fallback_template_path' => resource_path('templates/attendance/102_sig_fr_007_registro_de_asistencia.xlsx'),
     'template_version' => env('MEETING_ATTENDANCE_TEMPLATE_VERSION', '102-SIG-FR-007-V04'),
     'soffice_path' => env(
         'MEETING_ATTENDANCE_SOFFICE_PATH',
-        '/Users/jonathanjimenez/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override/soffice'
+        'libreoffice'
     ),
     'python_path' => env(
         'MEETING_ATTENDANCE_PYTHON_PATH',
-        '/Users/jonathanjimenez/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3'
+        'python3'
     ),
 ];
