@@ -15,6 +15,7 @@ use BaconQrCode\Renderer\RendererStyle\RendererStyle;
 use BaconQrCode\Writer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
@@ -778,6 +779,14 @@ class MeetingAttendanceService
         $process->run();
 
         if (!$process->isSuccessful() || !is_file($stampedPath)) {
+            Log::warning('No se pudo estampar encabezado y pie en el PDF de asistencia.', [
+                'pdf_path' => $pdfPath,
+                'stamped_path' => $stampedPath,
+                'python' => $python,
+                'output' => trim($process->getOutput()),
+                'error_output' => trim($process->getErrorOutput()),
+            ]);
+
             return;
         }
 

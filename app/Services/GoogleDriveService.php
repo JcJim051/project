@@ -643,9 +643,7 @@ class GoogleDriveService
         while ($attempt < $retries) {
             $attempt++;
             try {
-                $drive = $this->drive($userId);
-                $response = $drive->files->get($fileId, ['alt' => 'media']);
-                file_put_contents($destinationPath, $response->getBody()->getContents());
+                $this->downloadBinaryFile($fileId, $destinationPath, $userId);
 
                 return;
             } catch (\Throwable $e) {
@@ -679,7 +677,6 @@ class GoogleDriveService
 
     private function exportGoogleWorkspaceFile(string $fileId, string $destinationPath, ?int $userId = null): void
     {
-        $drive = $this->drive($userId);
         $meta = $this->getDriveFileMeta($fileId, $userId);
         $exportMimeType = $this->workspaceExportMimeType((string) ($meta['mimeType'] ?? ''));
 
@@ -687,8 +684,39 @@ class GoogleDriveService
             throw new \RuntimeException('El archivo de Google Workspace no tiene formato de exportacion soportado: '.(string) ($meta['mimeType'] ?? 'desconocido'));
         }
 
-        $response = $drive->files->export($fileId, $exportMimeType, ['alt' => 'media']);
-        file_put_contents($destinationPath, $response->getBody()->getContents());
+        $this->downloadToFile(
+            sprintf('https://www.googleapis.com/drive/v3/files/%s/export', rawurlencode($fileId)),
+            $destinationPath,
+            $userId,
+            ['mimeType' => $exportMimeType]
+        );
+    }
+
+    private function downloadBinaryFile(string $fileId, string $destinationPath, ?int $userId = null): void
+    {
+        $this->downloadToFile(
+            sprintf('https://www.googleapis.com/drive/v3/files/%s', rawurlencode($fileId)),
+            $destinationPath,
+            $userId,
+            ['alt' => 'media']
+        );
+    }
+
+    private function downloadToFile(string $url, string $destinationPath, ?int $userId, array $query): void
+    {
+        $directory = dirname($destinationPath);
+        if (! is_dir($directory)) {
+            @mkdir($directory, 0775, true);
+        }
+
+        $client = $this->client($userId, true);
+        $http = $client->authorize();
+        $http->request('GET', $url, [
+            'query' => $query,
+            'sink' => $destinationPath,
+            'timeout' => 0,
+            'read_timeout' => 0,
+        ]);
     }
 
     private function workspaceExportMimeType(string $mimeType): ?string

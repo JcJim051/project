@@ -10,6 +10,8 @@ use App\Services\AttachmentPackageService;
 use App\Services\GoogleDriveService;
 use App\Services\MgaTransferAuthorizationService;
 use App\Services\RequirementProgressService;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -244,9 +246,13 @@ class AttachmentPackageRunController extends Controller
             return null;
         }
 
+        @set_time_limit(0);
+
         $baseName = $run->output_filename ?: $run->zip_filename ?: ('adjuntos_v' . ($run->version_number ?? 1));
         $extension = pathinfo($baseName, PATHINFO_EXTENSION);
-        $tempPath = tempnam(sys_get_temp_dir(), 'attachment_run_');
+        $tempDir = storage_path('app/tmp/attachment-run-downloads');
+        File::ensureDirectoryExists($tempDir);
+        $tempPath = tempnam($tempDir, 'attachment_run_');
         if ($tempPath === false) {
             throw new \RuntimeException('No se pudo crear archivo temporal para la descarga.');
         }
@@ -262,6 +268,15 @@ class AttachmentPackageRunController extends Controller
             app(GoogleDriveService::class)->downloadFile((string) $run->drive_file_id, $tempPath, auth()->id());
         } catch (\Throwable $e) {
             @unlink($tempPath);
+            Log::error('No se pudo descargar cartera histórica desde Drive.', [
+                'run_id' => $run->id,
+                'project_id' => $run->project_id,
+                'drive_file_id' => $run->drive_file_id,
+                'output_type' => $run->output_type,
+                'output_filename' => $run->output_filename,
+                'zip_filename' => $run->zip_filename,
+                'message' => $e->getMessage(),
+            ]);
             throw $e;
         }
 
