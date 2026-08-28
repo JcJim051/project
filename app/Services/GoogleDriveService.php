@@ -15,6 +15,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Psr\Http\Message\StreamInterface;
 
 class GoogleDriveService
 {
@@ -667,6 +668,20 @@ class GoogleDriveService
         }
 
         throw $lastException ?: new \RuntimeException('No se pudo descargar archivo desde Drive.');
+    }
+
+    public function openDownloadStream(string $fileId, ?int $userId = null): StreamInterface
+    {
+        $client = $this->client($userId, true);
+        $http = $client->authorize();
+        $response = $http->request('GET', sprintf('https://www.googleapis.com/drive/v3/files/%s', rawurlencode($fileId)), [
+            'query' => ['alt' => 'media'],
+            'stream' => true,
+            'timeout' => 0,
+            'read_timeout' => 0,
+        ]);
+
+        return $response->getBody();
     }
 
     private function isGoogleWorkspaceDownloadError(\Throwable $e): bool

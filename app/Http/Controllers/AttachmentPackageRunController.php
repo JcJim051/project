@@ -10,11 +10,9 @@ use App\Services\AttachmentPackageService;
 use App\Services\GoogleDriveService;
 use App\Services\MgaTransferAuthorizationService;
 use App\Services\RequirementProgressService;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 
 class AttachmentPackageRunController extends Controller
 {
@@ -204,6 +202,10 @@ class AttachmentPackageRunController extends Controller
     public function download(Project $project, AttachmentPackageRun $run)
     {
         abort_unless($run->project_id === $project->id, 404);
+        if ($run->drive_file_id) {
+            return $this->streamRunFromDrive($run);
+        }
+
         $path = $this->resolveRunAccessPath($run);
         abort_unless($path, 404);
 
@@ -231,44 +233,48 @@ class AttachmentPackageRunController extends Controller
 
     private function resolveRunAccessPath(AttachmentPackageRun $run): ?string
     {
-        if ($run->drive_file_id) {
-            return $this->downloadRunFromDrive($run);
-        }
-
         $path = $this->runLocalPath($run);
 
         return $path && file_exists($path) ? $path : null;
     }
 
-    private function downloadRunFromDrive(AttachmentPackageRun $run): ?string
+    private function streamRunFromDrive(AttachmentPackageRun $run)
     {
-        if (!$run->drive_file_id) {
-            return null;
-        }
-
         @set_time_limit(0);
 
-        $baseName = $run->output_filename ?: $run->zip_filename ?: ('adjuntos_v' . ($run->version_number ?? 1));
-        $extension = pathinfo($baseName, PATHINFO_EXTENSION);
-        $tempDir = storage_path('app/tmp/attachment-run-downloads');
-        File::ensureDirectoryExists($tempDir);
-        $tempPath = tempnam($tempDir, 'attachment_run_');
-        if ($tempPath === false) {
-            throw new \RuntimeException('No se pudo crear archivo temporal para la descarga.');
+        $filename = $run->output_filename ?: $run->zip_filename ?: ('Adjuntos_V' . ($run->version_number ?? 1) . '.zip');
+        $contentType = ($run->output_type ?: 'zip') === 'pdf'
+            ? 'application/pdf'
+            : 'application/zip';
+        $size = null;
+
+        try {
+            $meta = app(GoogleDriveService::class)->getDriveFileMeta((string) $run->drive_file_id, auth()->id());
+            $size = isset($meta['size']) ? (int) $meta['size'] : null;
+            $contentType = (string) ($meta['mimeType'] ?? $contentType);
+        } catch (\Throwable $e) {
+            Log::warning('No se pudo consultar metadata de cartera histórica en Drive antes del streaming.', [
+                'run_id' => $run->id,
+                'project_id' => $run->project_id,
+                'drive_file_id' => $run->drive_file_id,
+                'message' => $e->getMessage(),
+            ]);
         }
 
-        if ($extension !== '') {
-            $renamed = $tempPath . '.' . Str::lower($extension);
-            if (@rename($tempPath, $renamed)) {
-                $tempPath = $renamed;
-            }
+        $headers = [
+            'Content-Type' => $contentType,
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+            'X-Accel-Buffering' => 'no',
+        ];
+
+        if ($size) {
+            $headers['Content-Length'] = (string) $size;
         }
 
         try {
-            app(GoogleDriveService::class)->downloadFile((string) $run->drive_file_id, $tempPath, auth()->id());
+            $stream = app(GoogleDriveService::class)->openDownloadStream((string) $run->drive_file_id, auth()->id());
         } catch (\Throwable $e) {
-            @unlink($tempPath);
-            Log::error('No se pudo descargar cartera histórica desde Drive.', [
+            Log::error('No se pudo abrir stream de cartera histórica desde Drive.', [
                 'run_id' => $run->id,
                 'project_id' => $run->project_id,
                 'drive_file_id' => $run->drive_file_id,
@@ -277,10 +283,28 @@ class AttachmentPackageRunController extends Controller
                 'zip_filename' => $run->zip_filename,
                 'message' => $e->getMessage(),
             ]);
-            throw $e;
+
+            abort(503, 'No se pudo iniciar la descarga desde Drive.');
         }
 
-        return $tempPath;
+        return response()->streamDownload(function () use ($run, $stream): void {
+            try {
+                while (! $stream->eof()) {
+                    echo $stream->read(8 * 1024 * 1024);
+                    flush();
+                }
+            } catch (\Throwable $e) {
+                Log::error('No se pudo transmitir cartera histórica desde Drive.', [
+                    'run_id' => $run->id,
+                    'project_id' => $run->project_id,
+                    'drive_file_id' => $run->drive_file_id,
+                    'output_type' => $run->output_type,
+                    'output_filename' => $run->output_filename,
+                    'zip_filename' => $run->zip_filename,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }, $filename, $headers);
     }
 
     private function shouldDeleteAfterSend(AttachmentPackageRun $run, string $path): bool
